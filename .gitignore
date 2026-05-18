@@ -16,5 +16,5 @@ build/
 .github
 pnpm-lock.yaml
 yarn.lockerrors/
-downloads/
+downloads
 errors
