@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+.env
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+.github
+pnpm-lock.yaml
+yarn.lock
