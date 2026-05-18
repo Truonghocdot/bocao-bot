@@ -14,7 +14,7 @@ build/
 /playwright/.cache/
 /playwright/.auth/
 .github
-pnpm-lock.yaml
-yarn.lockerrors/
-downloads
-errors
+**pnpm-lock.yaml
+**pnpm-workspace.yaml
+**/playwright-report
+**/node_modules
