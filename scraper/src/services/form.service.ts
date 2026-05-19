@@ -21,13 +21,22 @@ async function waitForSelectorOrDkkdError(
   step: string,
   timeout = 30000
 ): Promise<void> {
-  const found = await Promise.race([
-    page.waitForSelector(selector, { state: "visible", timeout }).then(() => "selector" as const),
-    page.waitForURL(`**${DKKD_ERROR_PATH}`, { timeout }).then(() => "dkkd-error" as const),
-  ]);
+  try {
+    const found = await Promise.race([
+      page.waitForSelector(selector, { state: "visible", timeout }).then(() => "selector" as const),
+      page.waitForURL(`**${DKKD_ERROR_PATH}`, { timeout }).then(() => "dkkd-error" as const),
+    ]);
 
-  if (found === "dkkd-error") {
-    throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+    if (found === "dkkd-error") {
+      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+    }
+  } catch (err: any) {
+    // Nếu timeout xảy ra, kiểm tra URL hiện tại — trang có thể đã redirect
+    // sang error page nhưng chưa kịp resolve Promise.race
+    if (page.url().includes(DKKD_ERROR_PATH)) {
+      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+    }
+    throw err;
   }
 }
 
@@ -54,8 +63,11 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
       "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld",
       "NEW"
     );
-  } catch (error) {
-    assertNotDkkdErrorPage(page, "fillSearchForm:selectOption");
+  } catch (error: any) {
+    // Nếu selectOption timeout, trang có thể đã redirect sang error page
+    if (page.url().includes(DKKD_ERROR_PATH)) {
+      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=fillSearchForm:selectOption]`);
+    }
     throw error;
   }
 
