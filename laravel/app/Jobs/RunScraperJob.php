@@ -28,6 +28,12 @@ class RunScraperJob implements ShouldQueue
      */
     public $timeout = 7200; // 2 tiếng
 
+    /**
+     * Không retry — scraper không idempotent, retry sẽ chạy lại từ đầu
+     * và có thể conflict với job đang chạy trên Express.
+     */
+    public $tries = 1;
+
     protected ScrapeJob $jobRecord;
 
     public function __construct(ScrapeJob $jobRecord)
@@ -101,16 +107,22 @@ class RunScraperJob implements ShouldQueue
             $sent = count($partialFiles) > 0 ? $this->deliverFiles($partialFiles, false) : 0;
 
             $this->jobRecord->update([
-                'status'        => 'failed',
+                'status'           => 'failed',
                 'downloaded_count' => count($partialFiles),
-                'error_message' => $this->truncateForDatabase($e->getMessage()),
-                'delivered_at' => $sent > 0 ? now() : null,
+                'error_message'    => $this->truncateForDatabase($e->getMessage()),
+                'delivered_at'     => $sent > 0 ? now() : null,
             ]);
 
             $this->notify($sent > 0
                 ? "⚠️ Có lỗi xảy ra khi lấy dữ liệu. Bot đã gửi {$sent} file PDF tải được trước khi lỗi."
                 : $this->buildFailureMessage($e)
             );
+
+            // Re-throw để failed() hook biết job thực sự fail
+            // (nhưng chỉ khi không có file nào được gửi — nếu đã gửi thì không cần recovery)
+            if ($sent === 0) {
+                throw $e;
+            }
         }
     }
 
@@ -252,16 +264,30 @@ class RunScraperJob implements ShouldQueue
 
         $this->jobRecord->refresh();
 
-        // Chỉ dispatch recovery nếu có download_dir và job chưa completed/stopped
+        // Đã gửi file trong catch block rồi → không cần recovery
+        if ($this->jobRecord->delivered_at !== null) {
+            return;
+        }
+
+        // Có file trên disk nhưng chưa gửi → dispatch recovery
         if (
             $this->jobRecord->download_dir
             && is_dir($this->jobRecord->download_dir)
             && ! in_array($this->jobRecord->status, ['completed', 'stopped'])
         ) {
-            $this->jobRecord->update(['status' => 'failed']);
-            DeliverPendingFilesJob::dispatch($this->jobRecord);
-            Log::info("RunScraperJob #{$this->jobRecord->id}: dispatched DeliverPendingFilesJob for recovery.");
+            $files = glob(rtrim($this->jobRecord->download_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.pdf') ?: [];
+
+            if (count($files) > 0) {
+                $this->jobRecord->update(['status' => 'failed']);
+                DeliverPendingFilesJob::dispatch($this->jobRecord);
+                Log::info("RunScraperJob #{$this->jobRecord->id}: dispatched DeliverPendingFilesJob — {$this->jobRecord->id} files found.");
+                return;
+            }
         }
+
+        // Không có file → chỉ notify lỗi
+        $this->jobRecord->update(['status' => 'failed']);
+        $this->notify($this->buildFailureMessage($exception));
     }
 
     /* --------------------------------------------------------
