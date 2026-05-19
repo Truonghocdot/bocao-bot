@@ -168,7 +168,6 @@ class TelegramCommandService
         📤 *Bạn muốn gửi file PDF cho @username nào?*
 
         Nhập đúng định dạng `@username`.
-        Ví dụ: `@truonghocdot`
 
         _Chỉ hỗ trợ @username trong bước này._
         TXT);
