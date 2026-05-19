@@ -23,9 +23,9 @@ class RunScraperJob implements ShouldQueue
 
     /**
      * Click-based scraping and per-file Telegram delivery can take a while.
-     * Worst case: ~1800 pages × 8s + buffer + delivery time ≈ 5.5 hours.
+     * Worst case: ~1730 files ≈ 50 phút scrape + ~40 phút gửi Telegram = ~2 tiếng.
      */
-    public $timeout = 21600; // 6 tiếng
+    public $timeout = 7200; // 2 tiếng
 
     protected ScrapeJob $jobRecord;
 

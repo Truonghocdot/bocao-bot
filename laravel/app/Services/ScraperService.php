@@ -16,26 +16,32 @@ class ScraperService
     }
 
     /**
-     * Ước lượng timeout dựa trên số lượng trang cần scrape.
-     * Playwright mất trung bình ~8 giây/trang (bao gồm load, click, download).
-     * Thêm 300 giây buffer cho khởi động browser và overhead mạng.
+     * Ước lượng timeout dựa trên số lượng bản ghi cần scrape.
      *
-     * Giới hạn tối đa 18000 giây (5 tiếng) cho trường hợp "tất cả" (~1800 trang).
+     * Từ log thực tế:
+     *   - Phase 1 (crawl pages): ~7.2 giây/trang, mỗi trang 20 rows
+     *   - Phase 2 (download PDF): ~1.35 giây/file
+     *   - Buffer: +20%
+     *
+     * Worst case "tất cả" (~1730 bản): ~50 phút → giới hạn 3600 giây (1 tiếng).
      */
     protected function estimateTimeout(?int $limit): int
     {
-        $secondsPerPage = 8;
-        $buffer         = 300;
-        $maxTimeout     = 18000; // 5 tiếng
+        $secondsPerPage     = 7.2;
+        $secondsPerDownload = 1.35;
+        $rowsPerPage        = 20;
+        $bufferMultiplier   = 1.2;
+        $maxTimeout         = 3600; // 1 tiếng — đủ cho worst case ~1730 bản
 
         if ($limit === null) {
-            // "Tất cả" — ước lượng theo worst case 1800 trang
             return $maxTimeout;
         }
 
-        $estimated = ($limit * $secondsPerPage) + $buffer;
+        $pages    = (int) ceil($limit / $rowsPerPage);
+        $crawl    = $pages * $secondsPerPage;
+        $download = $limit * $secondsPerDownload;
 
-        return min($estimated, $maxTimeout);
+        return (int) min(ceil(($crawl + $download) * $bufferMultiplier), $maxTimeout);
     }
 
     /**
