@@ -57,7 +57,7 @@ class RunScraperJob implements ShouldQueue
                 ]);
             }
 
-            $this->notify("⚙️ Đang cào dữ liệu từ DKKD...\nQuá trình này có thể mất vài phút. Vui lòng chờ.");
+            $this->notify("⚙️ Đang cào dữ liệu từ DKKD...\nQuá trình này có thể mất nhiều thời gian. Vui lòng chờ.");
 
             // Gọi Express API với params từ job record
             $result = $scraperService->runScrape(
