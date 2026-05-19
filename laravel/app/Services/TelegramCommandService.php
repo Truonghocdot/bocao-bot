@@ -168,8 +168,9 @@ class TelegramCommandService
         📤 *Bạn muốn gửi file PDF cho @username nào?*
 
         Nhập đúng định dạng `@username`.
+        _(Tài khoản đó phải đã từng nhắn tin với bot này.)_
 
-        _Chỉ hỗ trợ @username trong bước này._
+        _Hoặc /cancel để huỷ._
         TXT);
     }
 
@@ -180,7 +181,7 @@ class TelegramCommandService
         $targetChatId = $this->parseTargetChatId($input, $chatId);
 
         if ($targetChatId === null) {
-            $this->send($chatId, "❌ Vui lòng nhập đúng định dạng `@username`.");
+            $this->send($chatId, "❌ Không tìm thấy tài khoản `{$input}`.\nVui lòng kiểm tra lại @username và đảm bảo tài khoản đó đã từng nhắn tin với bot này.");
             return;
         }
 
@@ -318,6 +319,7 @@ class TelegramCommandService
 
         Nhập đúng định dạng `@username`.
         Ví dụ: `@botfile`
+        _(Tài khoản đó phải đã từng nhắn tin với bot này.)_
 
         _Chỉ hỗ trợ @username trong bước này._
         TXT);
@@ -329,7 +331,7 @@ class TelegramCommandService
         $targetChatId = $this->parseTargetChatId($input, $chatId);
 
         if ($targetChatId === null) {
-            $this->send($chatId, "❌ Vui lòng nhập đúng định dạng `@username`.");
+            $this->send($chatId, "❌ Không tìm thấy tài khoản `{$input}`.\nVui lòng kiểm tra lại @username và đảm bảo tài khoản đó đã từng nhắn tin với bot này.");
             return;
         }
 
@@ -473,15 +475,27 @@ class TelegramCommandService
         return [$n > 0 ? $n : null, $n > 0 ? "{$n} trang" : 'Tất cả'];
     }
 
+    /**
+     * Resolve @username → numeric chat_id bằng Telegram getChat API.
+     * Trả về chat_id dạng string số nếu thành công, null nếu không hợp lệ hoặc không tìm thấy.
+     */
     protected function parseTargetChatId(string $input, string $currentChatId): ?string
     {
         $trimmed = trim($input);
 
-        if (preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
-            return $trimmed;
+        if (!preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
+            return null;
         }
 
-        return null;
+        try {
+            $chat = Telegram::getChat(['chat_id' => $trimmed]);
+            $id   = $chat->getId();
+
+            return $id ? (string) $id : null;
+        } catch (\Throwable $e) {
+            Log::warning("parseTargetChatId: cannot resolve '{$trimmed}' — " . $e->getMessage());
+            return null;
+        }
     }
 
     protected function makeDownloadKey(ScrapeJob $job): string
