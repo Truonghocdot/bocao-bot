@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ScrapeJob;
 use App\Models\ScrapeSchedule;
+use App\Models\TelegramUser;
 use App\Jobs\RunScraperJob;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Laravel\Facades\Telegram;
@@ -476,8 +477,9 @@ class TelegramCommandService
     }
 
     /**
-     * Resolve @username → numeric chat_id bằng Telegram getChat API.
-     * Trả về chat_id dạng string số nếu thành công, null nếu không hợp lệ hoặc không tìm thấy.
+     * Resolve @username → numeric chat_id bằng cách tra cứu trong bảng telegram_users.
+     * Bảng này được populate mỗi khi user nhắn tin với bot.
+     * Trả về chat_id dạng string số nếu tìm thấy, null nếu không hợp lệ hoặc chưa có trong DB.
      */
     protected function parseTargetChatId(string $input, string $currentChatId): ?string
     {
@@ -487,15 +489,14 @@ class TelegramCommandService
             return null;
         }
 
-        try {
-            $chat = Telegram::getChat(['chat_id' => $trimmed]);
-            $id   = $chat->getId();
+        $user = TelegramUser::findByUsername($trimmed);
 
-            return $id ? (string) $id : null;
-        } catch (\Throwable $e) {
-            Log::warning("parseTargetChatId: cannot resolve '{$trimmed}' — " . $e->getMessage());
+        if (!$user) {
+            Log::warning("parseTargetChatId: username '{$trimmed}' not found in telegram_users table.");
             return null;
         }
+
+        return $user->chat_id;
     }
 
     protected function makeDownloadKey(ScrapeJob $job): string
