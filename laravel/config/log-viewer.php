@@ -181,6 +181,7 @@ return [
         storage_path('logs/*.log'),
         storage_path('logs/**/*.log'),
         '/var/www/html/bocao-bot/storage/**/*.log',
+        '/var/log/nginx/*.log',
 
 
         // log ngoài Laravel (project root)
