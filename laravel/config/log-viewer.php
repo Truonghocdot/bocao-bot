@@ -180,6 +180,8 @@ return [
         // log bên trong Laravel
         storage_path('logs/*.log'),
         storage_path('logs/**/*.log'),
+        '/var/www/html/bocao-bot/storage/**/*.log',
+
 
         // log ngoài Laravel (project root)
         '/var/www/html/bocao-bot/storage/**/*.log',
