@@ -95,12 +95,22 @@ class TelegramCommandService
      * ================================================================= */
     protected function handleRun(string $chatId): void
     {
-        $running = ScrapeJob::where('chat_id', $chatId)
+        // Check global — scraper chỉ xử lý được 1 job tại một thời điểm
+        $myJob = ScrapeJob::where('chat_id', $chatId)
             ->whereIn('status', ['pending', 'processing'])
             ->exists();
 
-        if ($running) {
-            $this->send($chatId, "⚠️ Đang có tiến trình chạy. Dùng /stop để dừng trước, hoặc /status để kiểm tra.");
+        if ($myJob) {
+            $this->send($chatId, "⚠️ Bạn đang có tiến trình chạy. Dùng /stop để dừng trước, hoặc /status để kiểm tra.");
+            return;
+        }
+
+        $otherJob = ScrapeJob::where('chat_id', '!=', $chatId)
+            ->whereIn('status', ['pending', 'processing'])
+            ->exists();
+
+        if ($otherJob) {
+            $this->send($chatId, "⏳ Hệ thống đang xử lý một yêu cầu khác. Vui lòng thử lại sau ít phút.");
             return;
         }
 
