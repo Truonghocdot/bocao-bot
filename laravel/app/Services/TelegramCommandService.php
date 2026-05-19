@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ScrapeJob;
 use App\Models\ScrapeSchedule;
 use App\Jobs\RunScraperJob;
+use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Laravel\Facades\Telegram;
 
 class TelegramCommandService
@@ -164,12 +165,12 @@ class TelegramCommandService
         ]);
 
         $this->send($chatId, <<<TXT
-        📤 *Bạn muốn gửi file PDF cho chat_id nào?*
+        📤 *Bạn muốn gửi file PDF cho @username nào?*
 
-        Nhập `không` để gửi về cuộc trò chuyện hiện tại.
-        Hoặc nhập `chat_id` Telegram dạng số, ví dụ: `123456789`.
+        Nhập đúng định dạng `@username`.
+        Ví dụ: `@truonghocdot`
 
-        _Không hỗ trợ @username, channel hoặc group trong bước này._
+        _Chỉ hỗ trợ @username trong bước này._
         TXT);
     }
 
@@ -180,7 +181,7 @@ class TelegramCommandService
         $targetChatId = $this->parseTargetChatId($input, $chatId);
 
         if ($targetChatId === null) {
-            $this->send($chatId, "❌ Vui lòng nhập `chat_id` dạng số, hoặc nhập `không` để gửi về chat hiện tại.");
+            $this->send($chatId, "❌ Vui lòng nhập đúng định dạng `@username`.");
             return;
         }
 
@@ -205,7 +206,7 @@ class TelegramCommandService
         🚀 *Đã đưa vào hàng đợi!*
         📅 {$session['from_date']} → {$session['to_date']}
         📄 Tối đa: *{$session['limit_label']}*
-        📤 Gửi PDF tới chat_id: `{$targetChatId}`
+        📤 Gửi PDF tới: `{$targetChatId}`
 
         Bot sẽ gửi từng file PDF sau khi tải xong.
         TXT);
@@ -314,12 +315,12 @@ class TelegramCommandService
         ]);
 
         $this->send($chatId, <<<TXT
-        📤 *Lịch tự động sẽ gửi file PDF cho chat_id nào?*
+        📤 *Lịch tự động sẽ gửi file PDF cho @username nào?*
 
-        Nhập `không` để gửi về cuộc trò chuyện hiện tại.
-        Hoặc nhập `chat_id` Telegram dạng số, ví dụ: `123456789`.
+        Nhập đúng định dạng `@username`.
+        Ví dụ: `@botfile`
 
-        _Không hỗ trợ @username, channel hoặc group trong bước này._
+        _Chỉ hỗ trợ @username trong bước này._
         TXT);
     }
 
@@ -329,7 +330,7 @@ class TelegramCommandService
         $targetChatId = $this->parseTargetChatId($input, $chatId);
 
         if ($targetChatId === null) {
-            $this->send($chatId, "❌ Vui lòng nhập `chat_id` dạng số, hoặc nhập `không` để gửi về chat hiện tại.");
+            $this->send($chatId, "❌ Vui lòng nhập đúng định dạng `@username`.");
             return;
         }
 
@@ -351,7 +352,7 @@ class TelegramCommandService
         ✅ *Lịch tự động đã được lưu!*
         ⏰ Chạy mỗi ngày lúc: *{$session['time']}*
         📄 Tối đa: *{$session['limit_label']}*
-        📤 Gửi PDF tới chat_id: `{$targetChatId}`
+        📤 Gửi PDF tới: `{$targetChatId}`
 
         Dùng /status để kiểm tra, /schedule để bật/tắt.
         TXT);
@@ -475,14 +476,10 @@ class TelegramCommandService
 
     protected function parseTargetChatId(string $input, string $currentChatId): ?string
     {
-        $normalized = mb_strtolower(trim($input));
+        $trimmed = trim($input);
 
-        if (in_array($normalized, ['không', 'khong', 'no', 'none', '0', 'hiện tại', 'hien tai'])) {
-            return preg_match('/^\d+$/', $currentChatId) ? $currentChatId : null;
-        }
-
-        if (preg_match('/^\d+$/', trim($input))) {
-            return trim($input);
+        if (preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
+            return $trimmed;
         }
 
         return null;
@@ -500,9 +497,23 @@ class TelegramCommandService
     {
         $cleaned = preg_replace('/^[ \t]+/m', '', $text);
 
-        Telegram::sendMessage([
-            'chat_id' => $chatId,
-            'text' => $cleaned,
-        ]);
+        try {
+            Telegram::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $cleaned,
+                'parse_mode' => 'Markdown',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Telegram markdown parse failed, fallback to plain text', [
+                'chat_id' => $chatId,
+                'error' => $e->getMessage(),
+                'text' => $cleaned,
+            ]);
+
+            Telegram::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $cleaned,
+            ]);
+        }
     }
 }
