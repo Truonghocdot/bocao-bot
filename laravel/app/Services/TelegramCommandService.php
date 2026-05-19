@@ -216,14 +216,15 @@ class TelegramCommandService
 
         RunScraperJob::dispatch($job);
 
-        $estimatedDuration = $this->formatEstimatedDuration(
-            $this->scraperService->estimateRunTime($session['max_records'])
-        );
+        $timeEstimate = $this->scraperService->estimateRunTime($session['max_records']);
+        $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
+        $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
 
         $this->send($chatId, <<<TXT
         🚀 *Đã đưa vào hàng đợi!*
         📅 {$session['from_date']} → {$session['to_date']}
         📄 Tối đa: *{$session['limit_label']}*
+        📎 Số file ước lượng: *{$estimatedFiles}*
         ⏱ Thời gian ước lượng: *{$estimatedDuration}*
         📤 Gửi PDF tới: `{$targetChatId}`
 
@@ -559,6 +560,17 @@ class TelegramCommandService
         }
 
         return $prefix . "{$hours} giờ {$remainingMinutes} phút";
+    }
+
+    protected function formatEstimatedFiles(array $estimate): string
+    {
+        $files = $estimate['estimated_files'] ?? null;
+
+        if ($files === null) {
+            return 'chưa xác định';
+        }
+
+        return 'khoảng ' . number_format((int) $files, 0, ',', '.') . ' file';
     }
 
     /**
