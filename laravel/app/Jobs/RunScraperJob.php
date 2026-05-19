@@ -114,8 +114,20 @@ class RunScraperJob implements ShouldQueue
 
     protected function buildFailureMessage(\Throwable $e): string
     {
-        if (str_contains($e->getMessage(), self::DKKD_SITE_ERROR_CODE)) {
-            return "❌ Trang DKKD đang gặp lỗi hoặc đang chuyển sang trang báo lỗi, hiện không thể lấy dữ liệu. Vui lòng thử lại sau.";
+        $msg = $e->getMessage();
+
+        if (str_contains($msg, self::DKKD_SITE_ERROR_CODE)) {
+            return "❌ Trang tra cứu DKKD đang gặp lỗi (chuyển sang trang báo lỗi). Vui lòng thử lại sau.";
+        }
+
+        // Playwright timeout — thường do trang DKKD không phản hồi hoặc bị lỗi phía họ
+        if (str_contains($msg, 'waitForURL') || str_contains($msg, 'waitForNavigation')
+            || str_contains($msg, 'Timeout') && str_contains($msg, 'egazette')) {
+            return "❌ Trang tra cứu DKKD không phản hồi (timeout). Trang có thể đang bảo trì hoặc quá tải. Vui lòng thử lại sau ít phút.";
+        }
+
+        if (str_contains($msg, 'Timeout') || str_contains($msg, 'timeout')) {
+            return "❌ Quá thời gian chờ khi kết nối tới trang tra cứu DKKD. Vui lòng thử lại sau.";
         }
 
         return "❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau.";
