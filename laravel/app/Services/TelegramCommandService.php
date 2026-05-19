@@ -221,23 +221,23 @@ class TelegramCommandService
         $schedule = ScrapeSchedule::where('chat_id', $chatId)->first();
 
         if ($schedule) {
-            $limitLabel = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
+            $limitLabel   = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
             $targetChatId = $schedule->target_chat_id ?: $chatId;
-            $icon       = $schedule->is_active ? '✅' : '❌';
-            $status     = $schedule->is_active ? 'BẬT' : 'TẮT';
+            $icon         = $schedule->is_active ? '✅' : '❌';
+            $status       = $schedule->is_active ? 'BẬT' : 'TẮT';
 
             $this->send($chatId, <<<TXT
             🗓 *Lịch tự động hiện tại* — {$icon} {$status}
-            ⏰ Cron: `{$schedule->cron_expression}`
-            📄 Tối đa: *{$limitLabel}*
-            📤 Gửi tới chat_id: `{$targetChatId}`
+            ⏰ Giờ chạy: `{$schedule->cron_expression}`
+            📄 Số trang tối đa: *{$limitLabel}*
+            📤 Gửi file tới: `{$targetChatId}`
 
-            Gửi `/schedule` lần nữa để *bật/tắt*.
-            Hoặc nhập thời gian mới để *cài đặt lại*.
+            Mỗi ngày bot sẽ tự động cào dữ liệu DKKD của *ngày hôm trước* và gửi file PDF về tài khoản trên.
 
-            ⏰ *Bạn muốn lịch chạy vào lúc mấy giờ mỗi ngày?*
-            Nhập giờ theo định dạng `HH:mm` (VD: `08:00`, `07:30`)
-            _Hoặc /cancel để giữ nguyên._
+            ─────────────────────
+            Bạn muốn làm gì?
+            • Nhập giờ mới (VD: `07:30`) để *cài đặt lại lịch*
+            • Gõ /cancel để *giữ nguyên*
             TXT);
 
             $this->conversation->transition($chatId, 'await_time_schedule');
@@ -249,9 +249,14 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         🗓 *Cài đặt lịch chạy tự động*
 
-        ⏰ *Bạn muốn lịch chạy vào lúc mấy giờ mỗi ngày?*
-        Nhập giờ theo định dạng `HH:mm`
-        Ví dụ: `08:00` → chạy lúc 8h sáng mỗi ngày
+        Bot sẽ tự động cào dữ liệu DKKD mỗi ngày và gửi file PDF về tài khoản bạn chỉ định — không cần thao tác thủ công.
+
+        ─────────────────────
+        ⏰ *Bước 1/3 — Giờ chạy*
+        Bạn muốn bot chạy vào lúc mấy giờ mỗi ngày?
+
+        Nhập theo định dạng `HH:mm`
+        Ví dụ: `07:00` → chạy lúc 7h sáng, lấy dữ liệu của ngày hôm trước
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -276,7 +281,7 @@ class TelegramCommandService
 
         // Parse HH:mm
         if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim($input), $matches)) {
-            $this->send($chatId, "❌ Vui lòng nhập đúng định dạng `HH:mm`, ví dụ: `08:00`");
+            $this->send($chatId, "❌ Định dạng không hợp lệ. Vui lòng nhập theo dạng `HH:mm`, ví dụ: `07:00`");
             return;
         }
 
@@ -284,7 +289,7 @@ class TelegramCommandService
         $minute = (int) $matches[2];
 
         if ($hour > 23 || $minute > 59) {
-            $this->send($chatId, "❌ Giờ không hợp lệ. Nhập lại, ví dụ: `08:00`");
+            $this->send($chatId, "❌ Giờ không hợp lệ. Vui lòng nhập lại, ví dụ: `07:00`");
             return;
         }
 
@@ -293,10 +298,14 @@ class TelegramCommandService
         $this->conversation->transition($chatId, 'await_pages_schedule', ['cron' => $cron, 'time' => trim($input)]);
 
         $this->send($chatId, <<<TXT
-        ✅ Đã ghi nhận giờ chạy: *{$input}* hằng ngày.
+        ✅ Giờ chạy: *{$input}* mỗi ngày.
 
-        📄 *Bạn muốn lấy tối đa bao nhiêu trang kết quả mỗi lần?*
+        ─────────────────────
+        📄 *Bước 2/3 — Số trang*
+        Mỗi lần chạy, bot sẽ lấy tối đa bao nhiêu trang kết quả từ DKKD?
+
         Nhập số trang (VD: `3`, `10`) hoặc `tất cả` để lấy toàn bộ.
+        _(Lưu ý: càng nhiều trang thì thời gian chạy càng lâu.)_
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -316,13 +325,16 @@ class TelegramCommandService
         ]);
 
         $this->send($chatId, <<<TXT
-        📤 *Lịch tự động sẽ gửi file PDF cho @username nào?*
+        ✅ Số trang tối đa: *{$limitLabel}*.
+
+        ─────────────────────
+        📤 *Bước 3/3 — Tài khoản nhận file*
+        File PDF sau khi tải xong sẽ được gửi tới tài khoản nào?
 
         Nhập đúng định dạng `@username`.
-        Ví dụ: `@botfile`
-        _(Tài khoản đó phải đã từng nhắn tin với bot này.)_
+        _(Tài khoản đó phải đã từng nhắn tin với bot này ít nhất một lần.)_
 
-        _Chỉ hỗ trợ @username trong bước này._
+        _Hoặc /cancel để huỷ._
         TXT);
     }
 
@@ -342,9 +354,9 @@ class TelegramCommandService
         ScrapeSchedule::updateOrCreate(
             ['chat_id' => $chatId],
             [
-                'target_chat_id'   => $targetChatId,
+                'target_chat_id'  => $targetChatId,
                 'cron_expression' => $session['cron'],
-                'days_back'       => 1,   // lịch luôn lấy "hôm qua đến hôm nay"
+                'days_back'       => 1,
                 'max_records'     => $session['max_records'],
                 'is_active'       => true,
             ]
@@ -352,11 +364,14 @@ class TelegramCommandService
 
         $this->send($chatId, <<<TXT
         ✅ *Lịch tự động đã được lưu!*
-        ⏰ Chạy mỗi ngày lúc: *{$session['time']}*
-        📄 Tối đa: *{$session['limit_label']}*
-        📤 Gửi PDF tới: `{$targetChatId}`
 
-        Dùng /status để kiểm tra, /schedule để bật/tắt.
+        ⏰ Giờ chạy: *{$session['time']}* mỗi ngày
+        📅 Dữ liệu: ngày hôm trước tính từ lúc chạy
+        📄 Số trang tối đa: *{$session['limit_label']}*
+        📤 Gửi file tới: `{$targetChatId}`
+
+        Bot sẽ tự động chạy theo lịch trên mà không cần thao tác thêm.
+        Dùng /status để kiểm tra, /schedule để chỉnh sửa.
         TXT);
     }
 
