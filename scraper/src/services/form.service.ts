@@ -16,7 +16,10 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
     "NEW"
   );
 
-  await page.waitForTimeout(1500);
+  await page.waitForSelector("#ctl00_C_PUBLISH_DATEFilterFldFrom", {
+    state: "visible",
+    timeout: 10000,
+  });
 
   // remove readonly
   await page.evaluate(() => {
@@ -44,7 +47,10 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
       ?.remove();
   });
 
-  await page.waitForTimeout(2000);
+  await page.waitForSelector("#ctl00_C_BtnFilter", {
+    state: "visible",
+    timeout: 10000,
+  });
 }
 
 export async function submitSearch(page: Page, token: string) {

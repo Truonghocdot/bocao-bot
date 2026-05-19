@@ -20,5 +20,16 @@ export async function createPage(browser: Browser): Promise<Page> {
     acceptDownloads: true,
   });
 
+  await context.route("**/*", (route) => {
+    const type = route.request().resourceType();
+
+    if (["font", "image", "media"].includes(type)) {
+      route.abort();
+      return;
+    }
+
+    route.continue();
+  });
+
   return context.newPage();
 }

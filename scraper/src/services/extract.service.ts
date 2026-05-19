@@ -1,4 +1,6 @@
 import { Page } from "@playwright/test";
+import axios from "axios";
+import pLimit from "p-limit";
 import path from "path";
 import fs from "fs";
 
@@ -47,10 +49,8 @@ export async function goToPage(page: Page, pageNumber: number) {
       return el && el.textContent?.trim() !== prev;
     },
     oldFirstRow,
-    { timeout: 60000 }
+    { timeout: 30000 }
   );
-
-  await page.waitForTimeout(2000);
 }
 
 export async function extractCurrentPageRows(
@@ -163,13 +163,26 @@ export async function downloadAllPdfs(
   rows: RowDetail[],
   downloadDir: string
 ) {
-  console.log(`🚀 Bắt đầu tải ${rows.length} PDF qua Playwright click...`);
+  console.log(`🚀 Bắt đầu tải ${rows.length} PDF...`);
+
+  const httpDownloadEnabled = process.env.HTTP_DOWNLOAD_ENABLED !== "0";
+  const failedRows = httpDownloadEnabled
+    ? await downloadPdfsViaHttp(rows, downloadDir)
+    : rows;
+
+  if (failedRows.length === 0) {
+    return;
+  }
+
+  if (httpDownloadEnabled) {
+    console.warn(`HTTP download failed for ${failedRows.length} file(s), falling back to Playwright click`);
+  }
 
   // Xác định trang hiện tại đang mở để không bị lệch
   const activePageText = await page.locator('.Pager span').first().innerText().catch(() => "1");
   let currentPage = parseInt(activePageText.trim(), 10) || 1;
 
-  for (const row of rows) {
+  for (const row of failedRows) {
     if (row.pageIndex !== currentPage) {
       await goToPage(page, row.pageIndex);
       currentPage = row.pageIndex;
@@ -183,8 +196,65 @@ export async function downloadAllPdfs(
     await download.saveAs(path.join(downloadDir, row.filename));
     
     console.log(`⬇️ Downloaded: ${row.filename}`);
-    await page.waitForTimeout(1000);
   }
+}
+
+async function downloadPdfsViaHttp(
+  rows: RowDetail[],
+  downloadDir: string
+): Promise<RowDetail[]> {
+  const concurrency = Math.max(1, Number(process.env.DOWNLOAD_CONCURRENCY || 4));
+  const limit = pLimit(concurrency);
+  const failedRows: RowDetail[] = [];
+
+  await Promise.all(
+    rows.map((row) =>
+      limit(async () => {
+        try {
+          await downloadPdfViaHttp(row, downloadDir);
+          console.log(`⬇️ Downloaded: ${row.filename}`);
+        } catch (error: any) {
+          failedRows.push(row);
+          console.warn(`HTTP download failed: ${row.filename} — ${error.message}`);
+        }
+      })
+    )
+  );
+
+  return failedRows.sort((a, b) => a.globalIndex - b.globalIndex);
+}
+
+async function downloadPdfViaHttp(row: RowDetail, downloadDir: string): Promise<void> {
+  if (!row.pdfUrl || !row.postData || !row.cookieHeader || !row.userAgent) {
+    throw new Error("Missing HTTP download metadata");
+  }
+
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(row.postData)) {
+    body.append(key, value);
+  }
+
+  const response = await axios.post(row.pdfUrl, body.toString(), {
+    responseType: "arraybuffer",
+    timeout: 60000,
+    maxRedirects: 5,
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": row.cookieHeader,
+      "User-Agent": row.userAgent,
+      "Referer": row.pdfUrl,
+    },
+    validateStatus: (status) => status >= 200 && status < 400,
+  });
+
+  const buffer = Buffer.from(response.data);
+  const contentType = String(response.headers["content-type"] || "");
+
+  if (!contentType.includes("pdf") && buffer.subarray(0, 4).toString() !== "%PDF") {
+    throw new Error(`Unexpected content type: ${contentType || "unknown"}`);
+  }
+
+  fs.writeFileSync(path.join(downloadDir, row.filename), buffer);
 }
 
 const ROWS_PER_PAGE = 20;

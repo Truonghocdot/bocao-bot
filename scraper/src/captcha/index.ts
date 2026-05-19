@@ -28,8 +28,12 @@ export async function solveCaptcha(pageUrl: string): Promise<string> {
 
   const taskId = task.taskId;
 
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 3500));
+  const pollIntervalMs = Math.max(1000, Number(process.env.CAPTCHA_POLL_INTERVAL_MS || 2000));
+  const timeoutMs = Math.max(30000, Number(process.env.CAPTCHA_TIMEOUT_MS || 90000));
+  const maxAttempts = Math.ceil(timeoutMs / pollIntervalMs);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
 
     const { data: result } = await axios.post(
       "https://api.capsolver.com/getTaskResult",
