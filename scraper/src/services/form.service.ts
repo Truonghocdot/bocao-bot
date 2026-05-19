@@ -1,14 +1,25 @@
 import { Page } from "@playwright/test";
-import { SITE_URL } from "../utils/contants.js";
+import { DKKD_ERROR_CODE, DKKD_ERROR_PATH, SITE_URL } from "../utils/contants.js";
 import { getEndDay, getStartDay } from "../utils/date.js";
+
+export function assertNotDkkdErrorPage(page: Page, step: string): void {
+  const currentUrl = page.url();
+
+  if (currentUrl.includes(DKKD_ERROR_PATH)) {
+    throw new Error(`${DKKD_ERROR_CODE}: Redirected to DKKD error page at step '${step}'`);
+  }
+}
+
 export async function openSite(page: Page) {
   console.log("🌐 Opening page...");
   await page.goto(SITE_URL, {
     waitUntil: "domcontentloaded",
   });
+  assertNotDkkdErrorPage(page, "openSite");
 }
 
 export async function fillSearchForm(page: Page, fromDate?: string, toDate?: string) {
+  assertNotDkkdErrorPage(page, "fillSearchForm:start");
   console.log("📌 Selecting announcement type...");
 
   await page.selectOption(
@@ -51,9 +62,11 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
     state: "visible",
     timeout: 10000,
   });
+  assertNotDkkdErrorPage(page, "fillSearchForm:end");
 }
 
 export async function submitSearch(page: Page, token: string) {
+  assertNotDkkdErrorPage(page, "submitSearch:start");
   console.log("✅ Injecting captcha token...");
 
   await page.evaluate((captchaToken) => {
@@ -123,4 +136,5 @@ export async function submitSearch(page: Page, token: string) {
   );
 
   console.log("✅ Result table updated");
+  assertNotDkkdErrorPage(page, "submitSearch:end");
 }

@@ -1,5 +1,6 @@
 import { Page } from "@playwright/test";
 import path from "path";
+import { assertNotDkkdErrorPage } from "./form.service.js";
 
 const PDF_BTN = 'input[id*="LnkGetPDFActive"]';
 
@@ -16,6 +17,7 @@ export interface RowDetail {
 }
 
 export async function goToPage(page: Page, pageNumber: number) {
+  assertNotDkkdErrorPage(page, `goToPage:${pageNumber}:start`);
   console.log(`➡️ Going to page ${pageNumber}`);
 
   const oldFirstRow = await page
@@ -48,6 +50,7 @@ export async function goToPage(page: Page, pageNumber: number) {
     oldFirstRow,
     { timeout: 30000 }
   );
+  assertNotDkkdErrorPage(page, `goToPage:${pageNumber}:end`);
 }
 
 export async function extractCurrentPageRows(

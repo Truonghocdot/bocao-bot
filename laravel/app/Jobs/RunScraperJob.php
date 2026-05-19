@@ -18,6 +18,7 @@ class RunScraperJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
+    protected const DKKD_SITE_ERROR_CODE = 'DKKD_SITE_ERROR';
     protected bool $targetChatUnavailable = false;
 
     /**
@@ -106,9 +107,18 @@ class RunScraperJob implements ShouldQueue
 
             $this->notify($sent > 0
                 ? "⚠️ Có lỗi xảy ra khi lấy dữ liệu. Bot đã gửi {$sent} file PDF tải được trước khi lỗi."
-                : "❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau."
+                : $this->buildFailureMessage($e)
             );
         }
+    }
+
+    protected function buildFailureMessage(\Throwable $e): string
+    {
+        if (str_contains($e->getMessage(), self::DKKD_SITE_ERROR_CODE)) {
+            return "❌ Trang DKKD đang gặp lỗi, hiện không thể lấy dữ liệu. Vui lòng thử lại sau.";
+        }
+
+        return "❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau.";
     }
 
     protected function makeDownloadKey(): string
