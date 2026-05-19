@@ -163,6 +163,10 @@ class TelegramCommandService
             'max_records' => $limit,
         ]);
 
+        $job->update([
+            'download_key' => $this->makeDownloadKey($job),
+        ]);
+
         RunScraperJob::dispatch($job);
 
         $this->send($chatId, <<<TXT
@@ -400,6 +404,11 @@ class TelegramCommandService
 
         $n = (int) $input;
         return [$n > 0 ? $n : null, $n > 0 ? "{$n} trang" : 'Tất cả'];
+    }
+
+    protected function makeDownloadKey(ScrapeJob $job): string
+    {
+        return now()->format('Ymd-His') . "-job-{$job->id}";
     }
 
     /**

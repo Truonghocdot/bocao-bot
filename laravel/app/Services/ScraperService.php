@@ -17,7 +17,7 @@ class ScraperService
     /**
      * Call the Express Scraper API
      */
-    public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null): array
+    public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null, ?string $downloadKey = null): array
     {
         Log::info("Sending request to scraper API: {$this->baseUrl}");
 
@@ -25,6 +25,7 @@ class ScraperService
         if ($fromDate) $payload['fromDate'] = $fromDate;
         if ($toDate) $payload['toDate'] = $toDate;
         if ($limit) $payload['limit'] = $limit;
+        if ($downloadKey) $payload['downloadKey'] = $downloadKey;
 
         $response = Http::timeout(600)->post($this->baseUrl, $payload);
 

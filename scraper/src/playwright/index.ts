@@ -13,17 +13,20 @@ export interface ScrapePayload {
   toDate?: string;     // dd/mm/yyyy — nếu không truyền thì lấy hôm nay
   limit?: number;      // tối đa bao nhiêu TRANG — undefined = lấy tất cả
   dryRun?: boolean;    // true = chỉ xem danh sách, không tải PDF
+  downloadKey?: string; // thư mục downloads/<downloadKey> do Laravel cấp
 }
 
 export interface ScrapeResult {
   downloaded: number;
   zip?: string;
+  downloadDir?: string;
   dryRun?: boolean;
   preview?: RowDetail[];
 }
 
 export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> {
-  const downloadDir = generateDownloadDir();
+  const downloadDir = generateDownloadDir(payload.downloadKey);
+  const absoluteDownloadDir = path.resolve(downloadDir);
 
   // Chỉ tạo thư mục nếu không phải dryRun
   if (!payload.dryRun) {
@@ -64,6 +67,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
       return {
         downloaded: 0,
+        downloadDir: absoluteDownloadDir,
         dryRun: true,
         preview: allItems,
       };
@@ -81,7 +85,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
     if (downloadedFiles.length === 0) {
       console.log("📭 Không có file PDF nào để nén.");
-      return { downloaded: 0 };
+      return { downloaded: 0, downloadDir: absoluteDownloadDir };
     }
 
     const zipFilename = `dkkd_new_${Date.now()}.zip`;
@@ -99,6 +103,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
     return {
       downloaded: allItems.length,
+      downloadDir: absoluteDownloadDir,
       zip: zipPath,
     };
   } catch (error: any) {

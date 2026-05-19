@@ -5,6 +5,7 @@ export interface ScrapeRequestPayload {
   toDate?: string;
   limit?: number;
   dryRun?: boolean;
+  downloadKey?: string;
 }
 
 export async function runScrape(payload: ScrapeRequestPayload) {
@@ -13,5 +14,6 @@ export async function runScrape(payload: ScrapeRequestPayload) {
     toDate: payload.toDate,
     limit: payload.limit,
     dryRun: payload.dryRun ?? false,
+    downloadKey: payload.downloadKey,
   });
 }

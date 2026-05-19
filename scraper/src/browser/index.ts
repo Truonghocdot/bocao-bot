@@ -3,7 +3,7 @@ import { isDebug } from "../utils/contants.js";
 
 export async function createBrowser(): Promise<Browser> {
   return chromium.launch({
-    headless: false,
+    headless: !isDebug,
     slowMo: isDebug ? 600 : 0,
   });
 }

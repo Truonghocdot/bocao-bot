@@ -29,7 +29,12 @@ export function buildDateRange(daysBack: number): [string, string] {
   return [formatDate(from), formatDate(new Date())];
 }
 
-export const generateDownloadDir = () => {
+export const generateDownloadDir = (downloadKey?: string) => {
+  if (downloadKey?.trim()) {
+    const safeKey = downloadKey.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+    return `downloads/${safeKey}`;
+  }
+
   const now = new Date();
   const folderName = [
     now.getFullYear(),

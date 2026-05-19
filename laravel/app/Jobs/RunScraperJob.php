@@ -40,7 +40,21 @@ class RunScraperJob implements ShouldQueue
         }
 
         try {
-            $this->jobRecord->update(['status' => 'processing']);
+            $downloadKey = $this->jobRecord->download_key ?: $this->makeDownloadKey();
+            $downloadDir = base_path("../scraper/downloads/{$downloadKey}");
+
+            $this->jobRecord->update([
+                'status' => 'processing',
+                'download_key' => $downloadKey,
+                'download_dir' => $downloadDir,
+            ]);
+
+            if ($this->jobRecord->schedule) {
+                $this->jobRecord->schedule->update([
+                    'last_download_key' => $downloadKey,
+                    'last_download_dir' => $downloadDir,
+                ]);
+            }
 
             $this->notify("⚙️ Đang cào dữ liệu từ DKKD...\nQuá trình này có thể mất vài phút. Vui lòng chờ.");
 
@@ -48,7 +62,8 @@ class RunScraperJob implements ShouldQueue
             $result = $scraperService->runScrape(
                 $this->jobRecord->from_date,
                 $this->jobRecord->to_date,
-                $this->jobRecord->max_records
+                $this->jobRecord->max_records,
+                $downloadKey
             );
 
             // Reload để kiểm tra user có /stop trong lúc đang chạy không
@@ -57,14 +72,20 @@ class RunScraperJob implements ShouldQueue
 
             $downloaded = $result['downloaded'] ?? 0;
             $zipPath    = $result['zip'] ?? null;
+            $downloadDir = $result['downloadDir'] ?? $this->jobRecord->download_dir;
 
             $this->jobRecord->update([
-                'status'           => $wasStopped ? 'stopped' : 'completed',
                 'downloaded_count' => $downloaded,
+                'download_dir'      => $downloadDir,
                 'zip_path'         => $zipPath,
             ]);
 
             $this->deliverZip($zipPath, $downloaded, $wasStopped);
+
+            $this->jobRecord->update([
+                'status' => $wasStopped ? 'stopped' : 'completed',
+                'delivered_at' => now(),
+            ]);
 
         } catch (\Throwable $e) {
             $logService->logException($e, null, "RunScraperJob #{$this->jobRecord->id}");
@@ -76,6 +97,11 @@ class RunScraperJob implements ShouldQueue
 
             $this->notify("❌ Lỗi trong quá trình scrape:\n`" . $e->getMessage() . "`");
         }
+    }
+
+    protected function makeDownloadKey(): string
+    {
+        return now()->format('Ymd-His') . "-job-{$this->jobRecord->id}";
     }
 
     /* --------------------------------------------------------
