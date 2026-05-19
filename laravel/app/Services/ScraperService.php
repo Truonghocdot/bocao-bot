@@ -16,19 +16,47 @@ class ScraperService
     }
 
     /**
+     * Ước lượng timeout dựa trên số lượng trang cần scrape.
+     * Playwright mất trung bình ~8 giây/trang (bao gồm load, click, download).
+     * Thêm 300 giây buffer cho khởi động browser và overhead mạng.
+     *
+     * Giới hạn tối đa 18000 giây (5 tiếng) cho trường hợp "tất cả" (~1800 trang).
+     */
+    protected function estimateTimeout(?int $limit): int
+    {
+        $secondsPerPage = 8;
+        $buffer         = 300;
+        $maxTimeout     = 18000; // 5 tiếng
+
+        if ($limit === null) {
+            // "Tất cả" — ước lượng theo worst case 1800 trang
+            return $maxTimeout;
+        }
+
+        $estimated = ($limit * $secondsPerPage) + $buffer;
+
+        return min($estimated, $maxTimeout);
+    }
+
+    /**
      * Call the Express Scraper API
      */
     public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null, ?string $downloadKey = null): array
     {
-        Log::info("Sending request to scraper API: {$this->baseUrl}");
+        $timeout = $this->estimateTimeout($limit);
 
-        $payload = [];  
-        if ($fromDate) $payload['fromDate'] = $fromDate;
-        if ($toDate) $payload['toDate'] = $toDate;
-        if ($limit) $payload['limit'] = $limit;
+        Log::info("Sending request to scraper API: {$this->baseUrl}", [
+            'limit'   => $limit ?? 'all',
+            'timeout' => $timeout,
+        ]);
+
+        $payload = [];
+        if ($fromDate)    $payload['fromDate']    = $fromDate;
+        if ($toDate)      $payload['toDate']      = $toDate;
+        if ($limit)       $payload['limit']       = $limit;
         if ($downloadKey) $payload['downloadKey'] = $downloadKey;
 
-        $response = Http::timeout(600)->post($this->baseUrl, $payload);
+        $response = Http::timeout($timeout)->post($this->baseUrl, $payload);
 
         if ($response->successful() && $response->json('success')) {
             return $response->json('data');
