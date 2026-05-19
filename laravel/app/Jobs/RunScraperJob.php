@@ -18,6 +18,7 @@ class RunScraperJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
+    protected bool $targetChatUnavailable = false;
 
     /**
      * Click-based scraping and per-file Telegram delivery can take a while.
@@ -136,6 +137,7 @@ class RunScraperJob implements ShouldQueue
     {
         $sent = 0;
         $targetChatId = $this->targetChatId();
+        $fallbackChatId = $this->jobRecord->chat_id;
         $prefix = $wasStopped ? "Đã dừng theo yêu cầu." : "PDF DKKD";
 
         foreach ($files as $file) {
@@ -152,11 +154,49 @@ class RunScraperJob implements ShouldQueue
                 $sent++;
                 usleep(250000);
             } catch (\Throwable $e) {
+                if ($this->shouldFallbackToSourceChat($e, $targetChatId, $fallbackChatId)) {
+                    try {
+                        Telegram::sendDocument([
+                            'chat_id'  => $fallbackChatId,
+                            'document' => InputFile::create($file),
+                            'caption'  => "{$prefix}\n" . basename($file),
+                        ]);
+                        $sent++;
+                        usleep(250000);
+                        continue;
+                    } catch (\Throwable $fallbackError) {
+                        Log::warning("RunScraperJob: Failed fallback send PDF {$file} — " . $fallbackError->getMessage());
+                    }
+                }
+
                 Log::warning("RunScraperJob: Failed to send PDF {$file} — " . $e->getMessage());
             }
         }
 
         return $sent;
+    }
+
+    protected function shouldFallbackToSourceChat(\Throwable $e, string $targetChatId, string $fallbackChatId): bool
+    {
+        if ($targetChatId === $fallbackChatId) {
+            return false;
+        }
+
+        $message = mb_strtolower($e->getMessage());
+        $isTargetUnavailable = str_contains($message, 'chat not found')
+            || str_contains($message, 'bot was blocked by the user')
+            || str_contains($message, 'user is deactivated');
+
+        if (! $isTargetUnavailable) {
+            return false;
+        }
+
+        if (! $this->targetChatUnavailable) {
+            Log::warning("RunScraperJob: Target chat '{$targetChatId}' unavailable, fallback to source chat '{$fallbackChatId}'.");
+            $this->targetChatUnavailable = true;
+        }
+
+        return true;
     }
 
     protected function collectDownloadedFiles(): array
