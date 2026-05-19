@@ -501,9 +501,8 @@ class TelegramCommandService
         $cleaned = preg_replace('/^[ \t]+/m', '', $text);
 
         Telegram::sendMessage([
-            'chat_id'    => $chatId,
-            'text'       => $cleaned,
-            'parse_mode' => 'Markdown',
+            'chat_id' => $chatId,
+            'text' => $cleaned,
         ]);
     }
 }
