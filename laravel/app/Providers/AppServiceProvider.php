@@ -7,27 +7,21 @@ use Opcodes\LogViewer\Facades\LogViewer;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
         //
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
         LogViewer::auth(function ($request) {
-            if ((bool) env('LOG_VIEWER_PUBLIC', false)) {
+            if (filter_var(config('app.log_viewer_public', false), FILTER_VALIDATE_BOOLEAN)) {
                 return true;
             }
 
             $allowedIps = array_filter(array_map(
                 'trim',
-                explode(',', (string) env('LOG_VIEWER_ALLOWED_IPS', ''))
+                explode(',', (string) config('app.log_viewer_allowed_ips', ''))
             ));
 
             return in_array($request->ip(), $allowedIps, true);

@@ -123,4 +123,7 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'log_viewer_public' => env('LOG_VIEWER_PUBLIC', false),
+    'log_viewer_allowed_ips' => env('LOG_VIEWER_ALLOWED_IPS', ''),
+
 ];
