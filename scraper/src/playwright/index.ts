@@ -4,7 +4,6 @@ import { collectAllRows, downloadAllPdfs, RowDetail } from "../services/extract.
 import { solveCaptcha } from "../captcha/index.js";
 import { generateDownloadDir } from "../utils/date.js";
 import { isDebug } from "../utils/contants.js";
-import { createZip } from "../services/zip.service.js";
 import fs from "fs";
 import path from "path";
 
@@ -18,8 +17,8 @@ export interface ScrapePayload {
 
 export interface ScrapeResult {
   downloaded: number;
-  zip?: string;
   downloadDir?: string;
+  files?: string[];
   dryRun?: boolean;
   preview?: RowDetail[];
 }
@@ -74,37 +73,33 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     }
 
     /* ----------------------------------------------------------------
-     | FULL RUN — Tải PDF + nén ZIP
+     | FULL RUN — Tải PDF
      * -------------------------------------------------------------- */
     await downloadAllPdfs(page, allItems, downloadDir); 
 
-    // Không tạo ZIP nếu không tải được file nào
     const downloadedFiles = fs.existsSync(downloadDir)
-      ? fs.readdirSync(downloadDir).filter((f) => f.endsWith(".pdf"))
+      ? fs.readdirSync(downloadDir)
+          .filter((f) => f.endsWith(".pdf"))
+          .sort()
+          .map((file) => path.join(absoluteDownloadDir, file))
       : [];
 
     if (downloadedFiles.length === 0) {
-      console.log("📭 Không có file PDF nào để nén.");
+      console.log("📭 Không có file PDF nào được tải.");
       return { downloaded: 0, downloadDir: absoluteDownloadDir };
     }
 
-    const zipFilename = `dkkd_new_${Date.now()}.zip`;
-    const storageRoot = path.resolve(process.cwd(), "..", "storage");
-    const zipPath = path.join(storageRoot, "zips", zipFilename);
-
-    await createZip(downloadDir, zipPath);
-
     console.log("🎉 DONE");
-    console.log(`📦 ZIP: ${zipPath}`);
+    console.log(`📄 Downloaded files: ${downloadedFiles.length}`);
 
     if (isDebug) {
       await page.pause();
     }
 
     return {
-      downloaded: allItems.length,
+      downloaded: downloadedFiles.length,
       downloadDir: absoluteDownloadDir,
-      zip: zipPath,
+      files: downloadedFiles,
     };
   } catch (error: any) {
     console.error("❌ scrapeDKKD ERROR:", error.message);

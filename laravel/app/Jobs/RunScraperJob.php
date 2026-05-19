@@ -20,9 +20,9 @@ class RunScraperJob implements ShouldQueue
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
 
     /**
-     * Timeout 10 phút — đủ cho Playwright cào xong + nén ZIP
+     * Click-based scraping and per-file Telegram delivery can take a while.
      */
-    public $timeout = 600;
+    public $timeout = 3600;
 
     protected ScrapeJob $jobRecord;
 
@@ -57,7 +57,7 @@ class RunScraperJob implements ShouldQueue
                 ]);
             }
 
-            $this->notify("⚙️ Đang cào dữ liệu từ DKKD...\nQuá trình này có thể mất nhiều thời gian. Vui lòng chờ.");
+            $this->notify("⚙️ Đang cào dữ liệu từ DKKD...\nBot sẽ gửi từng file PDF sau khi tải xong.");
 
             // Gọi Express API với params từ job record
             $result = $scraperService->runScrape(
@@ -72,31 +72,41 @@ class RunScraperJob implements ShouldQueue
             $wasStopped = $this->jobRecord->status === 'stopped';
 
             $downloaded = $result['downloaded'] ?? 0;
-            $zipPath    = $result['zip'] ?? null;
+            $files      = $result['files'] ?? [];
             $downloadDir = $result['downloadDir'] ?? $this->jobRecord->download_dir;
 
             $this->jobRecord->update([
                 'downloaded_count' => $downloaded,
                 'download_dir'      => $downloadDir,
-                'zip_path'         => $zipPath,
+                'zip_path'         => null,
             ]);
 
-            $this->deliverZip($zipPath, $downloaded, $wasStopped);
+            $sent = $this->deliverFiles($files, $wasStopped);
 
             $this->jobRecord->update([
                 'status' => $wasStopped ? 'stopped' : 'completed',
                 'delivered_at' => now(),
             ]);
 
+            $this->notify("✅ Đã gửi {$sent}/{$downloaded} file PDF.");
+
         } catch (\Throwable $e) {
             $logService->logException($e, null, "RunScraperJob #{$this->jobRecord->id}");
 
+            $partialFiles = $this->collectDownloadedFiles();
+            $sent = count($partialFiles) > 0 ? $this->deliverFiles($partialFiles, false) : 0;
+
             $this->jobRecord->update([
                 'status'        => 'failed',
+                'downloaded_count' => count($partialFiles),
                 'error_message' => $this->truncateForDatabase($e->getMessage()),
+                'delivered_at' => $sent > 0 ? now() : null,
             ]);
 
-            $this->notify("❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau.");
+            $this->notify($sent > 0
+                ? "⚠️ Có lỗi xảy ra khi lấy dữ liệu. Bot đã gửi {$sent} file PDF tải được trước khi lỗi."
+                : "❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau."
+            );
         }
     }
 
@@ -114,28 +124,53 @@ class RunScraperJob implements ShouldQueue
         return substr($message, 0, self::MAX_DB_ERROR_MESSAGE_LENGTH) . '...';
     }
 
-    /* --------------------------------------------------------
-     | Gửi file ZIP về Telegram khi hoàn thành (hoặc bị stop)
-     * ----------------------------------------------------- */
-    protected function deliverZip(?string $zipPath, int $downloaded, bool $wasStopped): void
+    protected function targetChatId(): string
     {
-        $prefix = $wasStopped
-            ? "🛑 Đã dừng theo yêu cầu."
-            : "✅ Hoàn thành!";
+        return $this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id;
+    }
 
-        if ($zipPath && file_exists($zipPath)) {
-            Telegram::sendDocument([
-                'chat_id'  => $this->jobRecord->chat_id,
-                'document' => InputFile::create($zipPath),
-                'caption'  => "{$prefix}\n📄 Đã tải: *{$downloaded}* bản công bố.\n📦 File ZIP đính kèm.",
-                'parse_mode' => 'Markdown',
-            ]);
-        } else {
-            $this->notify($downloaded > 0
-                ? "{$prefix}\n📄 Đã tải {$downloaded} bản công bố nhưng *không tìm thấy file ZIP*."
-                : "{$prefix}\n📭 Không tìm thấy bản công bố nào trong khoảng thời gian này."
-            );
+    /**
+     * Gửi từng file PDF về Telegram.
+     */
+    protected function deliverFiles(array $files, bool $wasStopped): int
+    {
+        $sent = 0;
+        $targetChatId = $this->targetChatId();
+        $prefix = $wasStopped ? "Đã dừng theo yêu cầu." : "PDF DKKD";
+
+        foreach ($files as $file) {
+            if (! is_string($file) || ! file_exists($file)) {
+                continue;
+            }
+
+            try {
+                Telegram::sendDocument([
+                    'chat_id'  => $targetChatId,
+                    'document' => InputFile::create($file),
+                    'caption'  => "{$prefix}\n" . basename($file),
+                ]);
+                $sent++;
+                usleep(250000);
+            } catch (\Throwable $e) {
+                Log::warning("RunScraperJob: Failed to send PDF {$file} — " . $e->getMessage());
+            }
         }
+
+        return $sent;
+    }
+
+    protected function collectDownloadedFiles(): array
+    {
+        $downloadDir = $this->jobRecord->download_dir;
+
+        if (! $downloadDir || ! is_dir($downloadDir)) {
+            return [];
+        }
+
+        $files = glob(rtrim($downloadDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.pdf') ?: [];
+        sort($files);
+
+        return $files;
     }
 
     /* --------------------------------------------------------

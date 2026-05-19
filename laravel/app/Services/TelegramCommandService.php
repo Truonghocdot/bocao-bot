@@ -62,8 +62,10 @@ class TelegramCommandService
         match ($state) {
             'await_date_run'       => $this->onRunDateInput($chatId, $input),
             'await_pages_run'      => $this->onRunPagesInput($chatId, $input),
+            'await_target_run'     => $this->onRunTargetInput($chatId, $input),
             'await_time_schedule'  => $this->onScheduleTimeInput($chatId, $input),
             'await_pages_schedule' => $this->onSchedulePagesInput($chatId, $input),
+            'await_target_schedule' => $this->onScheduleTargetInput($chatId, $input),
             default                => $this->conversation->clear($chatId),
         };
     }
@@ -148,19 +150,49 @@ class TelegramCommandService
         TXT);
     }
 
-    /** /run — Nhận số trang → dispatch job */
+    /** /run — Nhận số trang → hỏi chat nhận file */
     protected function onRunPagesInput(string $chatId, string $input): void
     {
         [$limit, $limitLabel] = $this->parsePages($input);
         $session = $this->conversation->get($chatId);
+
+        $this->conversation->transition($chatId, 'await_target_run', [
+            'from_date' => $session['from_date'],
+            'to_date' => $session['to_date'],
+            'max_records' => $limit,
+            'limit_label' => $limitLabel,
+        ]);
+
+        $this->send($chatId, <<<TXT
+        📤 *Bạn muốn gửi file PDF cho chat_id nào?*
+
+        Nhập `không` để gửi về cuộc trò chuyện hiện tại.
+        Hoặc nhập `chat_id` Telegram dạng số, ví dụ: `123456789`.
+
+        _Không hỗ trợ @username, channel hoặc group trong bước này._
+        TXT);
+    }
+
+    /** /run — Nhận chat nhận file → dispatch job */
+    protected function onRunTargetInput(string $chatId, string $input): void
+    {
+        $session = $this->conversation->get($chatId);
+        $targetChatId = $this->parseTargetChatId($input, $chatId);
+
+        if ($targetChatId === null) {
+            $this->send($chatId, "❌ Vui lòng nhập `chat_id` dạng số, hoặc nhập `không` để gửi về chat hiện tại.");
+            return;
+        }
+
         $this->conversation->clear($chatId);
 
         $job = ScrapeJob::create([
             'chat_id'     => $chatId,
+            'target_chat_id' => $targetChatId,
             'status'      => 'pending',
             'from_date'   => $session['from_date'],
             'to_date'     => $session['to_date'],
-            'max_records' => $limit,
+            'max_records' => $session['max_records'],
         ]);
 
         $job->update([
@@ -172,9 +204,10 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         🚀 *Đã đưa vào hàng đợi!*
         📅 {$session['from_date']} → {$session['to_date']}
-        📄 Tối đa: *{$limitLabel}*
+        📄 Tối đa: *{$session['limit_label']}*
+        📤 Gửi PDF tới chat_id: `{$targetChatId}`
 
-        Bot sẽ gửi file ZIP ngay khi hoàn thành.
+        Bot sẽ gửi từng file PDF sau khi tải xong.
         TXT);
     }
 
@@ -187,6 +220,7 @@ class TelegramCommandService
 
         if ($schedule) {
             $limitLabel = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
+            $targetChatId = $schedule->target_chat_id ?: $chatId;
             $icon       = $schedule->is_active ? '✅' : '❌';
             $status     = $schedule->is_active ? 'BẬT' : 'TẮT';
 
@@ -194,6 +228,7 @@ class TelegramCommandService
             🗓 *Lịch tự động hiện tại* — {$icon} {$status}
             ⏰ Cron: `{$schedule->cron_expression}`
             📄 Tối đa: *{$limitLabel}*
+            📤 Gửi tới chat_id: `{$targetChatId}`
 
             Gửi `/schedule` lần nữa để *bật/tắt*.
             Hoặc nhập thời gian mới để *cài đặt lại*.
@@ -265,19 +300,49 @@ class TelegramCommandService
         TXT);
     }
 
-    /** /schedule — Nhận số trang → lưu lịch */
+    /** /schedule — Nhận số trang → hỏi chat nhận file */
     protected function onSchedulePagesInput(string $chatId, string $input): void
     {
         [$limit, $limitLabel] = $this->parsePages($input);
+        $session = $this->conversation->get($chatId);
+
+        $this->conversation->transition($chatId, 'await_target_schedule', [
+            'cron' => $session['cron'],
+            'time' => $session['time'],
+            'max_records' => $limit,
+            'limit_label' => $limitLabel,
+        ]);
+
+        $this->send($chatId, <<<TXT
+        📤 *Lịch tự động sẽ gửi file PDF cho chat_id nào?*
+
+        Nhập `không` để gửi về cuộc trò chuyện hiện tại.
+        Hoặc nhập `chat_id` Telegram dạng số, ví dụ: `123456789`.
+
+        _Không hỗ trợ @username, channel hoặc group trong bước này._
+        TXT);
+    }
+
+    /** /schedule — Nhận chat nhận file → lưu lịch */
+    protected function onScheduleTargetInput(string $chatId, string $input): void
+    {
+        $targetChatId = $this->parseTargetChatId($input, $chatId);
+
+        if ($targetChatId === null) {
+            $this->send($chatId, "❌ Vui lòng nhập `chat_id` dạng số, hoặc nhập `không` để gửi về chat hiện tại.");
+            return;
+        }
+
         $session = $this->conversation->get($chatId);
         $this->conversation->clear($chatId);
 
         ScrapeSchedule::updateOrCreate(
             ['chat_id' => $chatId],
             [
+                'target_chat_id'   => $targetChatId,
                 'cron_expression' => $session['cron'],
                 'days_back'       => 1,   // lịch luôn lấy "hôm qua đến hôm nay"
-                'max_records'     => $limit,
+                'max_records'     => $session['max_records'],
                 'is_active'       => true,
             ]
         );
@@ -285,7 +350,8 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         ✅ *Lịch tự động đã được lưu!*
         ⏰ Chạy mỗi ngày lúc: *{$session['time']}*
-        📄 Tối đa: *{$limitLabel}*
+        📄 Tối đa: *{$session['limit_label']}*
+        📤 Gửi PDF tới chat_id: `{$targetChatId}`
 
         Dùng /status để kiểm tra, /schedule để bật/tắt.
         TXT);
@@ -302,7 +368,8 @@ class TelegramCommandService
             $limitLabel  = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
             $icon        = $schedule->is_active ? '✅' : '❌';
             $status      = $schedule->is_active ? 'BẬT' : 'TẮT';
-            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · {$limitLabel}";
+            $targetChatId = $schedule->target_chat_id ?: $chatId;
+            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · {$limitLabel} · gửi `{$targetChatId}`";
         } else {
             $scheduleText = "_Chưa cấu hình — dùng /schedule_";
         }
@@ -352,7 +419,7 @@ class TelegramCommandService
         }
 
         $activeJob->update(['status' => 'stopped']);
-        $this->send($chatId, "🛑 *Đã yêu cầu dừng.*\nHệ thống sẽ nén ZIP những file đã tải được và gửi lại cho bạn.");
+        $this->send($chatId, "🛑 *Đã yêu cầu dừng.*\nBot sẽ gửi các file PDF đã tải được.");
     }
 
     /* ===================================================================
@@ -404,6 +471,21 @@ class TelegramCommandService
 
         $n = (int) $input;
         return [$n > 0 ? $n : null, $n > 0 ? "{$n} trang" : 'Tất cả'];
+    }
+
+    protected function parseTargetChatId(string $input, string $currentChatId): ?string
+    {
+        $normalized = mb_strtolower(trim($input));
+
+        if (in_array($normalized, ['không', 'khong', 'no', 'none', '0', 'hiện tại', 'hien tai'])) {
+            return preg_match('/^\d+$/', $currentChatId) ? $currentChatId : null;
+        }
+
+        if (preg_match('/^\d+$/', trim($input))) {
+            return trim($input);
+        }
+
+        return null;
     }
 
     protected function makeDownloadKey(ScrapeJob $job): string

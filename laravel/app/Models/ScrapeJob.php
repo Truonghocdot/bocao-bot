@@ -12,6 +12,7 @@ class ScrapeJob extends Model
 
     protected $fillable = [
         'chat_id',
+        'target_chat_id',
         'scrape_schedule_id',
         'status',
         'from_date',

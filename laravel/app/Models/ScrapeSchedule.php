@@ -12,6 +12,7 @@ class ScrapeSchedule extends Model
 
     protected $fillable = [
         'chat_id',
+        'target_chat_id',
         'is_active',
         'cron_expression',
         'days_back',
