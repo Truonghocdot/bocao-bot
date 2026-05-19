@@ -13,13 +13,16 @@ class TelegramCommandService
 {
     protected TelegramLogService $logService;
     protected ConversationService $conversation;
+    protected ScraperService $scraperService;
 
     public function __construct(
         TelegramLogService $logService,
-        ConversationService $conversation
+        ConversationService $conversation,
+        ScraperService $scraperService
     ) {
         $this->logService   = $logService;
         $this->conversation = $conversation;
+        $this->scraperService = $scraperService;
     }
 
     /* ===================================================================
@@ -213,10 +216,15 @@ class TelegramCommandService
 
         RunScraperJob::dispatch($job);
 
+        $estimatedDuration = $this->formatEstimatedDuration(
+            $this->scraperService->estimateRunTime($session['max_records'])
+        );
+
         $this->send($chatId, <<<TXT
         🚀 *Đã đưa vào hàng đợi!*
         📅 {$session['from_date']} → {$session['to_date']}
         📄 Tối đa: *{$session['limit_label']}*
+        ⏱ Thời gian ước lượng: *{$estimatedDuration}*
         📤 Gửi PDF tới: `{$targetChatId}`
 
         Bot sẽ gửi từng file PDF sau khi tải xong.
@@ -527,6 +535,30 @@ class TelegramCommandService
     protected function makeDownloadKey(ScrapeJob $job): string
     {
         return now()->format('Ymd-His') . "-job-{$job->id}";
+    }
+
+    protected function formatEstimatedDuration(array $estimate): string
+    {
+        $seconds = max(1, (int) ($estimate['timeout_seconds'] ?? 1));
+        $prefix = ($estimate['mode'] ?? null) === 'all' ? 'tối đa khoảng ' : 'khoảng ';
+
+        if ($seconds < 60) {
+            return $prefix . "{$seconds} giây";
+        }
+
+        $minutes = (int) ceil($seconds / 60);
+        if ($minutes < 60) {
+            return $prefix . "{$minutes} phút";
+        }
+
+        $hours = intdiv($minutes, 60);
+        $remainingMinutes = $minutes % 60;
+
+        if ($remainingMinutes === 0) {
+            return $prefix . "{$hours} giờ";
+        }
+
+        return $prefix . "{$hours} giờ {$remainingMinutes} phút";
     }
 
     /**

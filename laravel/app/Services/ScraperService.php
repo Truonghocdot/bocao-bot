@@ -30,6 +30,11 @@ class ScraperService
         return $this->buildTimeEstimate($pageLimit)['timeout_seconds'];
     }
 
+    public function estimateRunTime(?int $pageLimit): array
+    {
+        return $this->buildTimeEstimate($pageLimit);
+    }
+
     protected function buildTimeEstimate(?int $pageLimit): array
     {
         $startupSeconds = max(0, (int) config('services.scraper.startup_seconds', 90));
