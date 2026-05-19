@@ -165,24 +165,44 @@ export async function downloadAllPdfs(
 ) {
   console.log(`🚀 Bắt đầu tải ${rows.length} PDF...`);
 
-  // Xác định trang hiện tại đang mở để không bị lệch
   const activePageText = await page.locator('.Pager span').first().innerText().catch(() => "1");
   let currentPage = parseInt(activePageText.trim(), 10) || 1;
 
   for (const row of rows) {
+    // Nếu browser/context đã bị đóng thì dừng hẳn — không thể tiếp tục
+    if (page.isClosed()) {
+      console.warn(`⚠️ Browser đã đóng tại file #${row.globalIndex + 1}, dừng tải.`);
+      break;
+    }
+
     if (row.pageIndex !== currentPage) {
       await goToPage(page, row.pageIndex);
       currentPage = row.pageIndex;
     }
 
-    const btn = page.locator(PDF_BTN).nth(row.rowIndex);
-    const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
-    
-    await btn.click();
-    const download = await downloadPromise;
-    await download.saveAs(path.join(downloadDir, row.filename));
-    
-    console.log(`⬇️ Downloaded: ${row.filename}`);
+    try {
+      const btn = page.locator(PDF_BTN).nth(row.rowIndex);
+      const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
+
+      await btn.click({ timeout: 30000 });
+      const download = await downloadPromise;
+      await download.saveAs(path.join(downloadDir, row.filename));
+
+      console.log(`⬇️ Downloaded: ${row.filename}`);
+    } catch (err: any) {
+      // Browser/context bị đóng — không thể tiếp tục dù muốn
+      if (
+        err.message?.includes('Target page, context or browser has been closed') ||
+        err.message?.includes('browser has been closed') ||
+        page.isClosed()
+      ) {
+        console.warn(`⚠️ Browser đóng khi tải file #${row.globalIndex + 1}, dừng tải.`);
+        break;
+      }
+
+      // Lỗi click timeout hoặc lỗi download đơn lẻ — bỏ qua, tiếp tục file tiếp theo
+      console.warn(`⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}): ${err.message}`);
+    }
   }
 }
 

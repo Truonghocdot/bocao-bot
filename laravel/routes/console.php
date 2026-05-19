@@ -136,7 +136,7 @@ Artisan::command('scraper:clean {--hours= : Delete files older than this many ho
     return 0;
 })->purpose('Clean old scraper downloads, ZIP files, and error screenshots');
 
-Schedule::command('scraper:clean')->hourly();
+Schedule::command('scraper:clean')->everyTwoHours();
 
 try {
     $schedules = ScrapeSchedule::where('is_active', true)->get();
