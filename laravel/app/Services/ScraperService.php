@@ -62,7 +62,9 @@ class ScraperService
         if ($limit)       $payload['limit']       = $limit;
         if ($downloadKey) $payload['downloadKey'] = $downloadKey;
 
-        $response = Http::timeout($timeout)->post($this->baseUrl, $payload);
+        $response = Http::timeout($timeout)
+            ->connectTimeout(10)
+            ->post($this->baseUrl, $payload);
 
         if ($response->successful() && $response->json('success')) {
             return $response->json('data');

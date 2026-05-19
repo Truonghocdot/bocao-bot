@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\DeliverPendingFilesJob;
 use App\Models\ScrapeJob;
 use App\Services\ScraperService;
 use App\Services\TelegramLogService;
@@ -234,6 +235,29 @@ class RunScraperJob implements ShouldQueue
         sort($files);
 
         return $files;
+    }
+
+    /* --------------------------------------------------------
+     | Laravel gọi failed() khi job bị timeout hoặc exception
+     | không được catch — dispatch recovery job để gửi file
+     | đã tải được trước khi bị kill.
+     * ----------------------------------------------------- */
+    public function failed(\Throwable $exception): void
+    {
+        Log::warning("RunScraperJob #{$this->jobRecord->id} failed: " . $exception->getMessage());
+
+        $this->jobRecord->refresh();
+
+        // Chỉ dispatch recovery nếu có download_dir và job chưa completed/stopped
+        if (
+            $this->jobRecord->download_dir
+            && is_dir($this->jobRecord->download_dir)
+            && ! in_array($this->jobRecord->status, ['completed', 'stopped'])
+        ) {
+            $this->jobRecord->update(['status' => 'failed']);
+            DeliverPendingFilesJob::dispatch($this->jobRecord);
+            Log::info("RunScraperJob #{$this->jobRecord->id}: dispatched DeliverPendingFilesJob for recovery.");
+        }
     }
 
     /* --------------------------------------------------------
