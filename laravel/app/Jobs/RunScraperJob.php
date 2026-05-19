@@ -118,6 +118,10 @@ class RunScraperJob implements ShouldQueue
     {
         $msg = $e->getMessage();
 
+        if (str_contains($msg, 'SCRAPER_BUSY')) {
+            return "⏳ Hệ thống scraper đang bận xử lý một yêu cầu khác. Vui lòng thử lại sau ít phút.";
+        }
+
         if (str_contains($msg, self::DKKD_SITE_ERROR_CODE)) {
             return "❌ Trang tra cứu DKKD đang gặp lỗi (chuyển sang trang báo lỗi). Vui lòng thử lại sau.";
         }

@@ -70,6 +70,11 @@ class ScraperService
             return $response->json('data');
         }
 
+        // 409 = scraper đang bận xử lý job khác
+        if ($response->status() === 409) {
+            throw new \Exception('SCRAPER_BUSY: ' . $response->json('message', 'Scraper is already running.'));
+        }
+
         Log::error('Scraper API failed: ' . $response->body());
         $errorMessage = (string) $response->json('message', 'Unknown error');
         $errorMessage = preg_replace('/\s+/', ' ', $errorMessage) ?? 'Unknown error';

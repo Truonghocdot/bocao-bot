@@ -142,6 +142,15 @@ try {
     $schedules = ScrapeSchedule::where('is_active', true)->get();
     foreach ($schedules as $schedule) {
         Schedule::call(function () use ($schedule) {
+            // Không dispatch nếu đang có job khác chạy
+            $alreadyRunning = ScrapeJob::whereIn('status', ['pending', 'processing'])->exists();
+            if ($alreadyRunning) {
+                \Illuminate\Support\Facades\Log::warning(
+                    "Schedule #{$schedule->id}: skipped dispatch — another job is already running."
+                );
+                return;
+            }
+
             $days     = $schedule->days_back ?? 1;
             $fromDate = now()->subDays($days - 1)->format('d/m/Y');
             $toDate   = now()->format('d/m/Y');
