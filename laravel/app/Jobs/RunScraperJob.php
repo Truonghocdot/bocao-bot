@@ -115,7 +115,7 @@ class RunScraperJob implements ShouldQueue
     protected function buildFailureMessage(\Throwable $e): string
     {
         if (str_contains($e->getMessage(), self::DKKD_SITE_ERROR_CODE)) {
-            return "❌ Trang DKKD đang gặp lỗi, hiện không thể lấy dữ liệu. Vui lòng thử lại sau.";
+            return "❌ Trang DKKD đang gặp lỗi hoặc đang chuyển sang trang báo lỗi, hiện không thể lấy dữ liệu. Vui lòng thử lại sau.";
         }
 
         return "❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau.";

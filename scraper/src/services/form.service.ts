@@ -1,12 +1,33 @@
 import { Page } from "@playwright/test";
-import { DKKD_ERROR_CODE, DKKD_ERROR_PATH, SITE_URL } from "../utils/contants.js";
+import {
+  DKKD_ERROR_CODE,
+  DKKD_ERROR_MESSAGE,
+  DKKD_ERROR_PATH,
+  SITE_URL,
+} from "../utils/contants.js";
 import { getEndDay, getStartDay } from "../utils/date.js";
 
 export function assertNotDkkdErrorPage(page: Page, step: string): void {
   const currentUrl = page.url();
 
   if (currentUrl.includes(DKKD_ERROR_PATH)) {
-    throw new Error(`${DKKD_ERROR_CODE}: Redirected to DKKD error page at step '${step}'`);
+    throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+  }
+}
+
+async function waitForSelectorOrDkkdError(
+  page: Page,
+  selector: string,
+  step: string,
+  timeout = 30000
+): Promise<void> {
+  const found = await Promise.race([
+    page.waitForSelector(selector, { state: "visible", timeout }).then(() => "selector" as const),
+    page.waitForURL(`**${DKKD_ERROR_PATH}`, { timeout }).then(() => "dkkd-error" as const),
+  ]);
+
+  if (found === "dkkd-error") {
+    throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
   }
 }
 
@@ -22,15 +43,28 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
   assertNotDkkdErrorPage(page, "fillSearchForm:start");
   console.log("📌 Selecting announcement type...");
 
-  await page.selectOption(
+  await waitForSelectorOrDkkdError(
+    page,
     "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld",
-    "NEW"
+    "fillSearchForm:announcementType"
   );
 
-  await page.waitForSelector("#ctl00_C_PUBLISH_DATEFilterFldFrom", {
-    state: "visible",
-    timeout: 10000,
-  });
+  try {
+    await page.selectOption(
+      "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld",
+      "NEW"
+    );
+  } catch (error) {
+    assertNotDkkdErrorPage(page, "fillSearchForm:selectOption");
+    throw error;
+  }
+
+  await waitForSelectorOrDkkdError(
+    page,
+    "#ctl00_C_PUBLISH_DATEFilterFldFrom",
+    "fillSearchForm:fromDate",
+    10000
+  );
 
   // remove readonly
   await page.evaluate(() => {
@@ -58,10 +92,12 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
       ?.remove();
   });
 
-  await page.waitForSelector("#ctl00_C_BtnFilter", {
-    state: "visible",
-    timeout: 10000,
-  });
+  await waitForSelectorOrDkkdError(
+    page,
+    "#ctl00_C_BtnFilter",
+    "fillSearchForm:filterButton",
+    10000
+  );
   assertNotDkkdErrorPage(page, "fillSearchForm:end");
 }
 
