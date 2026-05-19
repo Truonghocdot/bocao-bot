@@ -16,32 +16,56 @@ class ScraperService
     }
 
     /**
-     * Ước lượng timeout dựa trên số lượng bản ghi cần scrape.
+     * Ước lượng timeout theo số trang scraper sẽ xử lý.
      *
-     * Từ log thực tế:
-     *   - Phase 1 (crawl pages): ~7.2 giây/trang, mỗi trang 20 rows
-     *   - Phase 2 (download PDF): ~1.35 giây/file
-     *   - Buffer: +20%
+     * Formula:
+     *   timeout = (startup + pages * pageCost + estimatedFiles * fileCost) * buffer
      *
-     * Worst case "tất cả" (~1730 bản): ~50 phút → giới hạn 3600 giây (1 tiếng).
+     * `limit` từ Telegram/API là số trang, không phải số bản ghi.
+     * Với chế độ "tất cả", số trang thực tế chỉ biết sau khi scraper mở site,
+     * nên Laravel dùng max_timeout để không cắt request giữa chừng.
      */
-    protected function estimateTimeout(?int $limit): int
+    protected function estimateTimeout(?int $pageLimit): int
     {
-        $secondsPerPage     = 7.2;
-        $secondsPerDownload = 1.35;
-        $rowsPerPage        = 20;
-        $bufferMultiplier   = 1.2;
-        $maxTimeout         = 3600; // 1 tiếng — đủ cho worst case ~1730 bản
+        return $this->buildTimeEstimate($pageLimit)['timeout_seconds'];
+    }
 
-        if ($limit === null) {
-            return $maxTimeout;
+    protected function buildTimeEstimate(?int $pageLimit): array
+    {
+        $startupSeconds = max(0, (int) config('services.scraper.startup_seconds', 90));
+        $secondsPerPage = max(0, (float) config('services.scraper.seconds_per_page', 8));
+        $secondsPerFile = max(0, (float) config('services.scraper.seconds_per_file', 2));
+        $rowsPerPage = max(1, (int) config('services.scraper.rows_per_page', 20));
+        $buffer = max(1, (float) config('services.scraper.timeout_buffer', 1.25));
+        $minTimeout = max(1, (int) config('services.scraper.min_timeout', 180));
+        $maxTimeout = max($minTimeout, (int) config('services.scraper.max_timeout', 4800));
+
+        if ($pageLimit === null) {
+            return [
+                'mode' => 'all',
+                'pages' => null,
+                'estimated_files' => null,
+                'base_seconds' => null,
+                'buffer' => $buffer,
+                'timeout_seconds' => $maxTimeout,
+            ];
         }
 
-        $pages    = (int) ceil($limit / $rowsPerPage);
-        $crawl    = $pages * $secondsPerPage;
-        $download = $limit * $secondsPerDownload;
+        $pages = max(1, $pageLimit);
+        $estimatedFiles = $pages * $rowsPerPage;
+        $baseSeconds = $startupSeconds
+            + ($pages * $secondsPerPage)
+            + ($estimatedFiles * $secondsPerFile);
+        $estimatedSeconds = (int) ceil($baseSeconds * $buffer);
 
-        return (int) min(ceil(($crawl + $download) * $bufferMultiplier), $maxTimeout);
+        return [
+            'mode' => 'limited',
+            'pages' => $pages,
+            'estimated_files' => $estimatedFiles,
+            'base_seconds' => (int) ceil($baseSeconds),
+            'buffer' => $buffer,
+            'timeout_seconds' => min(max($estimatedSeconds, $minTimeout), $maxTimeout),
+        ];
     }
 
     /**
@@ -49,11 +73,13 @@ class ScraperService
      */
     public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null, ?string $downloadKey = null): array
     {
-        $timeout = $this->estimateTimeout($limit);
+        $timeEstimate = $this->buildTimeEstimate($limit);
+        $timeout = $timeEstimate['timeout_seconds'];
 
         Log::info("Sending request to scraper API: {$this->baseUrl}", [
             'limit'   => $limit ?? 'all',
             'timeout' => $timeout,
+            'time_estimate' => $timeEstimate,
         ]);
 
         $payload = [];

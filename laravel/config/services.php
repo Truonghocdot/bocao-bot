@@ -37,6 +37,13 @@ return [
 
     'scraper' => [
         'url' => env('SCRAPER_URL', 'http://127.0.0.1:3333/api/scrape'),
+        'min_timeout' => (int) env('SCRAPER_MIN_TIMEOUT', 180),
+        'max_timeout' => (int) env('SCRAPER_MAX_TIMEOUT', 4800),
+        'startup_seconds' => (int) env('SCRAPER_STARTUP_SECONDS', 90),
+        'seconds_per_page' => (float) env('SCRAPER_SECONDS_PER_PAGE', 8),
+        'seconds_per_file' => (float) env('SCRAPER_SECONDS_PER_FILE', 2),
+        'rows_per_page' => (int) env('SCRAPER_ROWS_PER_PAGE', 20),
+        'timeout_buffer' => (float) env('SCRAPER_TIMEOUT_BUFFER', 1.25),
     ],
 
 ];
