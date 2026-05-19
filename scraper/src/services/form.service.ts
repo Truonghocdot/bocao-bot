@@ -8,7 +8,7 @@ export async function openSite(page: Page) {
   });
 }
 
-export async function fillSearchForm(page: Page) {
+export async function fillSearchForm(page: Page, fromDate?: string, toDate?: string) {
   console.log("📌 Selecting announcement type...");
 
   await page.selectOption(
@@ -29,12 +29,12 @@ export async function fillSearchForm(page: Page) {
 
   await page.fill(
     "#ctl00_C_PUBLISH_DATEFilterFldFrom",
-    getStartDay()
+    fromDate || getStartDay()
   );
 
   await page.fill(
     "#ctl00_C_PUBLISH_DATEFilterFldTo",
-    getEndDay()
+    toDate || getEndDay()
   );
 
   // remove enterprise code field
@@ -86,12 +86,35 @@ export async function submitSearch(page: Page, token: string) {
 
   console.log("🔍 Submitting form...");
 
-  await Promise.all([
-    page.waitForLoadState("networkidle"),
-    page.click("#ctl00_C_BtnFilter"),
-  ]);
+  // Bypass client-side validation của ASP.NET WebForms
+  await page.evaluate(() => {
+    (window as any).ValidateFilter = () => true;
+  });
 
-  console.log("✅ Search completed");
+  // ASP.NET PostBack là full-page navigation —
+  // phải dùng waitForNavigation() để bắt đúng navigation MỚI phát sinh sau click.
+  // waitForLoadState() chỉ check trạng thái page hiện tại, không đợi navigation mới.
+  console.log("🔍 Submit filter...");
 
-  await page.waitForTimeout(3000);
+  const oldHtml = await page
+    .locator("#ctl00_C_CtlList")
+    .innerHTML();
+
+  await page.click("#ctl00_C_BtnFilter");
+
+  await page.waitForFunction(
+    (previous) => {
+      const current = document.querySelector(
+        "#ctl00_C_CtlList"
+      )?.innerHTML;
+
+      return current && current !== previous;
+    },
+    oldHtml,
+    {
+      timeout: 30000,
+    }
+  );
+
+  console.log("✅ Result table updated");
 }

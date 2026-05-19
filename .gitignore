@@ -18,3 +18,4 @@ build/
 **pnpm-workspace.yaml
 **/playwright-report
 **/node_modules
+**/storage
