@@ -17,6 +17,7 @@ use Telegram\Bot\FileUpload\InputFile;
 class RunScraperJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
 
     /**
      * Timeout 10 phút — đủ cho Playwright cào xong + nén ZIP
@@ -92,16 +93,25 @@ class RunScraperJob implements ShouldQueue
 
             $this->jobRecord->update([
                 'status'        => 'failed',
-                'error_message' => $e->getMessage(),
+                'error_message' => $this->truncateForDatabase($e->getMessage()),
             ]);
 
-            $this->notify("❌ Lỗi trong quá trình scrape:\n`" . $e->getMessage() . "`");
+            $this->notify("❌ Có lỗi xảy ra khi lấy dữ liệu. Vui lòng thử lại sau.");
         }
     }
 
     protected function makeDownloadKey(): string
     {
         return now()->format('Ymd-His') . "-job-{$this->jobRecord->id}";
+    }
+
+    protected function truncateForDatabase(string $message): string
+    {
+        if (strlen($message) <= self::MAX_DB_ERROR_MESSAGE_LENGTH) {
+            return $message;
+        }
+
+        return substr($message, 0, self::MAX_DB_ERROR_MESSAGE_LENGTH) . '...';
     }
 
     /* --------------------------------------------------------

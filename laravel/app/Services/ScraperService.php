@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 class ScraperService
 {
     protected string $baseUrl;
+    protected const MAX_ERROR_MESSAGE_LENGTH = 500;
 
     public function __construct()
     {
@@ -34,6 +35,13 @@ class ScraperService
         }
 
         Log::error('Scraper API failed: ' . $response->body());
-        throw new \Exception('Scraper API returned an error: ' . $response->json('message', 'Unknown error'));
+        $errorMessage = (string) $response->json('message', 'Unknown error');
+        $errorMessage = preg_replace('/\s+/', ' ', $errorMessage) ?? 'Unknown error';
+
+        if (strlen($errorMessage) > self::MAX_ERROR_MESSAGE_LENGTH) {
+            $errorMessage = substr($errorMessage, 0, self::MAX_ERROR_MESSAGE_LENGTH) . '...';
+        }
+
+        throw new \Exception('Scraper API returned an error: ' . $errorMessage);
     }
 }
