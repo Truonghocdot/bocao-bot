@@ -12,9 +12,8 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('scraper:clean {--hours= : Delete files older than this many hours} {--active-grace-minutes= : Treat recently stopped jobs as active for this many minutes} {--dry-run : Show files without deleting}', function () {
-    $hours = (int) ($this->option('hours') ?: env('SCRAPER_CLEANUP_HOURS', 24));
-    $activeGraceMinutes = (int) ($this->option('active-grace-minutes') ?: env('SCRAPER_ACTIVE_GRACE_MINUTES', 30));
+Artisan::command('scraper:clean {--hours= : Delete files for finished jobs older than this many hours} {--dry-run : Show files without deleting}', function () {
+    $hours = (int) ($this->option('hours') ?: env('SCRAPER_CLEANUP_HOURS', 2));
     $dryRun = (bool) $this->option('dry-run');
 
     if ($hours < 1) {
@@ -22,119 +21,108 @@ Artisan::command('scraper:clean {--hours= : Delete files older than this many ho
         return 1;
     }
 
-    if ($activeGraceMinutes < 1) {
-        $this->error('The --active-grace-minutes option must be at least 1.');
-        return 1;
-    }
+    $cutoff = now()->subHours($hours);
+    $finishedStatuses = ['completed', 'failed', 'stopped'];
+    $deletedFiles = 0;
+    $deletedDirectories = 0;
+    $deletedBytes = 0;
+    $matchedPaths = 0;
+    $downloadRoot = realpath(base_path('../scraper/downloads')) ?: base_path('../scraper/downloads');
+    $zipRoot = realpath(base_path('../storage/zips')) ?: base_path('../storage/zips');
+    $isAllowedCleanupPath = function (string $path) use ($downloadRoot, $zipRoot): bool {
+        $realPath = realpath($path) ?: $path;
 
-    $activeJobs = ScrapeJob::query()
-        ->whereIn('status', ['pending', 'processing'])
-        ->orWhere(function ($query) use ($activeGraceMinutes) {
-            $query->whereIn('status', ['stopped', 'failed'])
-                ->whereNull('delivered_at')
-                ->where('updated_at', '>=', now()->subMinutes($activeGraceMinutes));
+        return str_starts_with($realPath, $downloadRoot . DIRECTORY_SEPARATOR)
+            || str_starts_with($realPath, $zipRoot . DIRECTORY_SEPARATOR);
+    };
+
+    $jobs = ScrapeJob::query()
+        ->whereIn('status', $finishedStatuses)
+        ->where(function ($query) use ($cutoff) {
+            $query->where(function ($query) use ($cutoff) {
+                $query->whereNotNull('delivered_at')
+                    ->where('delivered_at', '<=', $cutoff);
+            })->orWhere(function ($query) use ($cutoff) {
+                $query->whereNull('delivered_at')
+                    ->where('updated_at', '<=', $cutoff);
+            });
         })
-        ->latest()
+        ->where(function ($query) {
+            $query->whereNotNull('download_dir')
+                ->orWhereNotNull('download_key')
+                ->orWhereNotNull('zip_path');
+        })
+        ->oldest('updated_at')
         ->get();
 
-    $unknownActiveJobs = $activeJobs->filter(fn (ScrapeJob $job) => ! $job->download_dir && ! $job->zip_path);
-    if ($unknownActiveJobs->isNotEmpty()) {
-        $this->warn('Skip cleanup because old active job(s) do not have download tracking yet.');
-
-        $unknownActiveJobs->each(function (ScrapeJob $job) {
-            $range = $job->from_date ? "{$job->from_date} -> {$job->to_date}" : 'no date range';
-            $zip = $job->zip_path ?: 'no zip yet';
-            $this->line("#{$job->id} {$job->status} {$range}; zip: {$zip}");
-        });
-
+    if ($jobs->isEmpty()) {
+        $this->info("No finished job files older than {$hours} hour(s) found.");
         return 0;
     }
 
-    if ($activeJobs->isNotEmpty()) {
-        $this->line("Protecting {$activeJobs->count()} active job(s) during cleanup.");
-    }
+    $this->line("Found {$jobs->count()} finished job(s) older than {$hours} hour(s).");
 
-    $activeSchedules = ScrapeSchedule::query()
-        ->where('is_active', true)
-        ->count();
+    foreach ($jobs as $job) {
+        $paths = collect([
+            $job->download_dir,
+            $job->download_key ? base_path("../scraper/downloads/{$job->download_key}") : null,
+            $job->zip_path,
+        ])
+            ->filter()
+            ->unique()
+            ->values();
 
-    if ($activeSchedules > 0) {
-        $this->line("Active schedule(s): {$activeSchedules}. No running job found, cleanup can continue.");
-    }
-
-    $cutoff = now()->subHours($hours)->getTimestamp();
-    $protectedPaths = $activeJobs
-        ->flatMap(fn (ScrapeJob $job) => [$job->download_dir, $job->zip_path])
-        ->filter()
-        ->map(fn (string $path) => realpath($path) ?: $path)
-        ->all();
-    $isProtectedPath = fn (string $path): bool => collect($protectedPaths)
-        ->contains(fn (string $protectedPath) => $path === $protectedPath || str_starts_with($path, $protectedPath . DIRECTORY_SEPARATOR));
-
-    $targets = [
-        base_path('../scraper/downloads'),
-        base_path('../storage/zips'),
-        base_path('../storage/errors'),
-    ];
-
-    $deletedFiles = 0;
-    $deletedBytes = 0;
-    $matchedFiles = 0;
-
-    foreach ($targets as $target) {
-        if (! File::isDirectory($target)) {
-            $this->line("Skip missing directory: {$target}");
-            continue;
-        }
-
-        foreach (File::allFiles($target) as $file) {
-            $pathname = $file->getPathname();
-            $realPath = $file->getRealPath() ?: $pathname;
-
-            if ($isProtectedPath($realPath)) {
-                $this->line("Skip protected file: {$pathname}");
+        foreach ($paths as $path) {
+            if (! File::exists($path)) {
                 continue;
             }
 
-            if ($file->getMTime() > $cutoff) {
+            if (! $isAllowedCleanupPath($path)) {
+                $this->warn("Skip unsafe cleanup path for job #{$job->id}: {$path}");
                 continue;
             }
 
-            $matchedFiles++;
-            $deletedBytes += $file->getSize();
+            $matchedPaths++;
+
+            if (File::isDirectory($path)) {
+                $fileCount = count(File::allFiles($path));
+                $bytes = collect(File::allFiles($path))->sum(fn ($file) => $file->getSize());
+                $deletedBytes += $bytes;
+
+                if ($dryRun) {
+                    $this->line("[dry-run] job #{$job->id} directory {$path} ({$fileCount} file(s))");
+                    continue;
+                }
+
+                File::deleteDirectory($path);
+                $deletedDirectories++;
+                $deletedFiles += $fileCount;
+                continue;
+            }
+
+            if (! File::isFile($path)) {
+                continue;
+            }
+
+            $deletedBytes += File::size($path);
 
             if ($dryRun) {
-                $this->line("[dry-run] {$pathname}");
+                $this->line("[dry-run] job #{$job->id} file {$path}");
                 continue;
             }
 
-            File::delete($pathname);
+            File::delete($path);
             $deletedFiles++;
-        }
-
-        if (! $dryRun) {
-            collect(File::directories($target))
-                ->sortByDesc(fn (string $dir) => substr_count($dir, DIRECTORY_SEPARATOR))
-                ->each(function (string $dir) use ($isProtectedPath) {
-                    $realDir = realpath($dir) ?: $dir;
-                    if ($isProtectedPath($realDir)) {
-                        return;
-                    }
-
-                    if (File::isDirectory($dir) && count(File::files($dir)) === 0 && count(File::directories($dir)) === 0) {
-                        File::deleteDirectory($dir);
-                    }
-                });
         }
     }
 
     $sizeMb = number_format($deletedBytes / 1024 / 1024, 2);
     $verb = $dryRun ? 'Matched' : 'Deleted';
-    $count = $dryRun ? $matchedFiles : $deletedFiles;
+    $count = $dryRun ? $matchedPaths : $deletedFiles;
 
-    $this->info("{$verb} {$count} old file(s), {$sizeMb} MB.");
+    $this->info("{$verb} {$count} path/file(s), {$deletedDirectories} directory/directories, {$sizeMb} MB.");
     return 0;
-})->purpose('Clean old scraper downloads, ZIP files, and error screenshots');
+})->purpose('Clean downloads and ZIP files for finished scraper jobs');
 
 Schedule::command('scraper:clean')->everyTwoHours();
 

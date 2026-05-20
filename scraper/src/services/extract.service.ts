@@ -1,8 +1,56 @@
 import { Page } from "@playwright/test";
 import path from "path";
+import fs from "fs";
 import { assertNotDkkdErrorPage } from "./form.service.js";
 
 const PDF_BTN = 'input[id*="LnkGetPDFActive"]';
+
+function isTimeoutError(error: any): boolean {
+  const message = String(error?.message ?? "");
+  return message.includes("Timeout") || message.includes("timed out");
+}
+
+function safeScreenshotName(row: RowDetail): string {
+  const baseName = row.filename.replace(/\.pdf$/i, "");
+  return baseName
+    .replace(/[^\p{L}\p{N}_-]/gu, "_")
+    .slice(0, 120);
+}
+
+async function captureDownloadErrorScreenshot(
+  page: Page,
+  row: RowDetail,
+  error: any
+): Promise<void> {
+  if (page.isClosed()) {
+    return;
+  }
+
+  const storageRoot = path.resolve(process.cwd(), "..", "storage");
+  const errDir = path.join(storageRoot, "errors");
+  fs.mkdirSync(errDir, { recursive: true });
+
+  const screenshotPath = path.join(
+    errDir,
+    `download-timeout-${String(row.globalIndex + 1).padStart(4, "0")}-${safeScreenshotName(row)}-${Date.now()}.png`
+  );
+
+  try {
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+    });
+
+    console.warn(
+      `📸 Đã lưu screenshot lỗi timeout file #${row.globalIndex + 1}: ${screenshotPath}`
+    );
+  } catch (screenshotError: any) {
+    console.warn(
+      `⚠️ Không thể chụp screenshot lỗi file #${row.globalIndex + 1}: ${screenshotError.message}`
+    );
+    console.warn(`⚠️ Lỗi gốc: ${error.message}`);
+  }
+}
 
 export interface RowDetail {
   globalIndex: number;
@@ -182,10 +230,11 @@ export async function downloadAllPdfs(
 
     try {
       const btn = page.locator(PDF_BTN).nth(row.rowIndex);
-      const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
+      const [download] = await Promise.all([
+        page.waitForEvent("download", { timeout: 60000 }),
+        btn.click({ timeout: 30000 }),
+      ]);
 
-      await btn.click({ timeout: 30000 });
-      const download = await downloadPromise;
       await download.saveAs(path.join(downloadDir, row.filename));
 
       console.log(`⬇️ Downloaded: ${row.filename}`);
@@ -201,6 +250,10 @@ export async function downloadAllPdfs(
       }
 
       // Lỗi click timeout hoặc lỗi download đơn lẻ — bỏ qua, tiếp tục file tiếp theo
+      if (isTimeoutError(err)) {
+        await captureDownloadErrorScreenshot(page, row, err);
+      }
+
       console.warn(`⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}): ${err.message}`);
     }
   }
