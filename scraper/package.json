@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "packageManager": "pnpm@11.1.1",
   "scripts": {
     "dev": "tsx src/app.ts",
     "start": "tsx src/app.ts",
@@ -15,7 +16,7 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "^11.1.1",
+      "version": "11.1.1",
       "onFail": "download"
     }
   },
