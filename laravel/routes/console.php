@@ -13,7 +13,9 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Artisan::command('scraper:clean {--hours= : Delete files for finished jobs older than this many hours} {--dry-run : Show files without deleting}', function () {
-    $hours = (int) ($this->option('hours') ?: env('SCRAPER_CLEANUP_HOURS', 2));
+    $hours = $this->option('hours') !== null
+        ? (int) $this->option('hours')
+        : 2;
     $dryRun = (bool) $this->option('dry-run');
 
     if ($hours < 1) {
@@ -124,7 +126,7 @@ Artisan::command('scraper:clean {--hours= : Delete files for finished jobs older
     return 0;
 })->purpose('Clean downloads and ZIP files for finished scraper jobs');
 
-Schedule::command('scraper:clean')->everyTwoHours();
+Schedule::command('scraper:clean --hours=2')->everyTwoHours();
 
 try {
     $schedules = ScrapeSchedule::where('is_active', true)->get();
