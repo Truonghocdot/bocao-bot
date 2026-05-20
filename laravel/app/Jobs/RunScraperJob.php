@@ -20,6 +20,7 @@ class RunScraperJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
     protected const DKKD_SITE_ERROR_CODE = 'DKKD_SITE_ERROR';
+    protected const DKKD_AUTH_REDIRECT_CODE = 'DKKD_AUTH_REDIRECT';
     protected bool $targetChatUnavailable = false;
 
     /**
@@ -136,6 +137,10 @@ class RunScraperJob implements ShouldQueue
 
         if (str_contains($msg, self::DKKD_SITE_ERROR_CODE)) {
             return "❌ Trang tra cứu DKKD đang gặp lỗi (chuyển sang trang báo lỗi). Vui lòng thử lại sau.";
+        }
+
+        if (str_contains($msg, self::DKKD_AUTH_REDIRECT_CODE)) {
+            return "❌ Trang tra cứu DKKD đang chặn truy cập. Vui lòng thử lại sau.";
         }
 
         // Playwright timeout — thường do trang DKKD không phản hồi hoặc bị lỗi phía họ

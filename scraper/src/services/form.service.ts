@@ -1,17 +1,34 @@
 import { Page } from "@playwright/test";
 import {
+  DKKD_AUTH_REDIRECT_CODE,
+  DKKD_AUTH_REDIRECT_MESSAGE,
   DKKD_ERROR_CODE,
   DKKD_ERROR_MESSAGE,
   DKKD_ERROR_PATH,
+  DKKD_PATH_REDIRECT_ACT,
   SITE_URL,
 } from "../utils/contants.js";
 import { getEndDay, getStartDay } from "../utils/date.js";
 
+const MAX_AUTH_REDIRECT_RETRIES = 8;
+
+function isDkkdErrorPageUrl(url: string): boolean {
+  return url.includes(DKKD_ERROR_PATH);
+}
+
+function isDkkdAuthRedirectUrl(url: string): boolean {
+  return url.startsWith(DKKD_PATH_REDIRECT_ACT);
+}
+
+function makeDkkdSiteError(step: string): Error {
+  return new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+}
+
 export function assertNotDkkdErrorPage(page: Page, step: string): void {
   const currentUrl = page.url();
 
-  if (currentUrl.includes(DKKD_ERROR_PATH)) {
-    throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+  if (isDkkdErrorPageUrl(currentUrl)) {
+    throw makeDkkdSiteError(step);
   }
 }
 
@@ -28,24 +45,44 @@ async function waitForSelectorOrDkkdError(
     ]);
 
     if (found === "dkkd-error") {
-      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+      throw makeDkkdSiteError(step);
     }
   } catch (err: any) {
     // Nếu timeout xảy ra, kiểm tra URL hiện tại — trang có thể đã redirect
     // sang error page nhưng chưa kịp resolve Promise.race
-    if (page.url().includes(DKKD_ERROR_PATH)) {
-      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+    if (isDkkdErrorPageUrl(page.url())) {
+      throw makeDkkdSiteError(step);
     }
     throw err;
   }
 }
 
 export async function openSite(page: Page) {
-  console.log("🌐 Opening page...");
-  await page.goto(SITE_URL, {
-    waitUntil: "domcontentloaded",
-  });
-  assertNotDkkdErrorPage(page, "openSite");
+  for (let attempt = 1; attempt <= MAX_AUTH_REDIRECT_RETRIES; attempt++) {
+    console.log(`🌐 Opening page... attempt ${attempt}/${MAX_AUTH_REDIRECT_RETRIES}`);
+
+    await page.goto(SITE_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+
+    const currentUrl = page.url();
+
+    if (isDkkdErrorPageUrl(currentUrl)) {
+      throw makeDkkdSiteError(`openSite:attempt${attempt}`);
+    }
+
+    if (isDkkdAuthRedirectUrl(currentUrl)) {
+      console.warn(
+        `⚠️ DKKD redirected to login page after opening SITE_URL. Retrying SITE_URL... attempt=${attempt}`
+      );
+      continue;
+    }
+
+    return;
+  }
+
+  throw new Error(`${DKKD_AUTH_REDIRECT_CODE}: ${DKKD_AUTH_REDIRECT_MESSAGE} [step=openSite]`);
 }
 
 export async function fillSearchForm(page: Page, fromDate?: string, toDate?: string) {
@@ -65,8 +102,8 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
     );
   } catch (error: any) {
     // Nếu selectOption timeout, trang có thể đã redirect sang error page
-    if (page.url().includes(DKKD_ERROR_PATH)) {
-      throw new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=fillSearchForm:selectOption]`);
+    if (isDkkdErrorPageUrl(page.url())) {
+      throw makeDkkdSiteError("fillSearchForm:selectOption");
     }
     throw error;
   }
