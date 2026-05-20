@@ -33,6 +33,27 @@ class TelegramCommandService
         try {
             $state = $this->conversation->getState($chatId);
 
+            if ($this->requiresAuthentication($chatId)) {
+                if ($state === 'await_auth_password' && !str_starts_with($text, '/')) {
+                    $this->onAuthPasswordInput($chatId, $text);
+                    return;
+                }
+
+                if (str_starts_with($text, '/cancel')) {
+                    $this->conversation->clear($chatId);
+                    $this->send($chatId, "↩️ Đã huỷ. Gõ /start để nhập mật khẩu.");
+                    return;
+                }
+
+                if (! str_starts_with($text, '/')) {
+                    $this->onAuthPasswordInput($chatId, $text);
+                    return;
+                }
+
+                $this->promptForPassword($chatId);
+                return;
+            }
+
             // Người dùng đang trong luồng hội thoại và nhập text thường (không phải lệnh)
             if ($state && !str_starts_with($text, '/')) {
                 $this->handleConversationInput($chatId, $state, $text);
@@ -65,6 +86,7 @@ class TelegramCommandService
     protected function handleConversationInput(string $chatId, string $state, string $input): void
     {
         match ($state) {
+            'await_auth_password' => $this->onAuthPasswordInput($chatId, $input),
             'await_date_run'       => $this->onRunDateInput($chatId, $input),
             'await_pages_run'      => $this->onRunPagesInput($chatId, $input),
             'await_target_run'     => $this->onRunTargetInput($chatId, $input),
@@ -81,8 +103,53 @@ class TelegramCommandService
     protected function handleStart(string $chatId): void
     {
         $this->conversation->clear($chatId);
+
+        if ($this->requiresAuthentication($chatId)) {
+            $this->promptForPassword($chatId);
+            return;
+        }
+
         $this->send($chatId, <<<TXT
         👋 *Bot DKKD Scraper* đã sẵn sàng!
+
+        📌 *Các lệnh:*
+        /run — Chạy cào dữ liệu ngay
+        /schedule — Lên lịch chạy tự động
+        /status — Xem trạng thái hệ thống
+        /stop — Dừng tiến trình đang chạy
+        /cancel — Huỷ thao tác đang nhập
+        TXT);
+    }
+
+    protected function promptForPassword(string $chatId): void
+    {
+        $this->conversation->transition($chatId, 'await_auth_password');
+
+        $this->send($chatId, <<<TXT
+        🔐 *Yêu cầu xác thực*
+
+        Vui lòng nhập mật khẩu để sử dụng bot.
+        _Hoặc /cancel để huỷ._
+        TXT);
+    }
+
+    protected function onAuthPasswordInput(string $chatId, string $input): void
+    {
+        if (! $this->isCorrectAccessPassword($input)) {
+            $this->conversation->transition($chatId, 'await_auth_password');
+            $this->send($chatId, "❌ Mật khẩu không đúng. Vui lòng nhập lại hoặc /cancel để huỷ.");
+            return;
+        }
+
+        TelegramUser::updateOrCreate(
+            ['chat_id' => $chatId],
+            ['authenticated_at' => now()]
+        );
+
+        $this->conversation->clear($chatId);
+
+        $this->send($chatId, <<<TXT
+        ✅ Xác thực thành công.
 
         📌 *Các lệnh:*
         /run — Chạy cào dữ liệu ngay
@@ -471,6 +538,29 @@ class TelegramCommandService
     /* ===================================================================
      | HELPERS
      * ================================================================= */
+
+    protected function requiresAuthentication(string $chatId): bool
+    {
+        if (! $this->isPasswordProtectionEnabled()) {
+            return false;
+        }
+
+        return ! TelegramUser::where('chat_id', $chatId)
+            ->whereNotNull('authenticated_at')
+            ->exists();
+    }
+
+    protected function isPasswordProtectionEnabled(): bool
+    {
+        return trim((string) config('telegram.access_password', '')) !== '';
+    }
+
+    protected function isCorrectAccessPassword(string $input): bool
+    {
+        $expected = trim((string) config('telegram.access_password', ''));
+
+        return $expected !== '' && hash_equals($expected, trim($input));
+    }
 
     /**
      * Parse "dd/mm/yyyy - dd/mm/yyyy" → ['dd/mm/yyyy', 'dd/mm/yyyy'] hoặc null

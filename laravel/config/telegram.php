@@ -75,6 +75,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Bot Access Password
+    |--------------------------------------------------------------------------
+    |
+    | When set, users must enter this password once before they can use bot
+    | commands. Leave empty to disable password protection.
+    |
+    */
+    'access_password' => env('TELEGRAM_ACCESS_PASSWORD'),
+
+    /*
+    |--------------------------------------------------------------------------
     | HTTP Client Handler [Optional]
     |--------------------------------------------------------------------------
     |

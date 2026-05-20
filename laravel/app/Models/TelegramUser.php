@@ -11,7 +11,15 @@ class TelegramUser extends Model
         'username',
         'first_name',
         'last_name',
+        'authenticated_at',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'authenticated_at' => 'datetime',
+        ];
+    }
 
     /**
      * Tìm user theo @username (không phân biệt hoa thường, không có @).
