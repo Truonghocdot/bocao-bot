@@ -19,4 +19,4 @@ build/
 **/playwright-report
 **/node_modules
 **/storage
-./scraper/downloads/*
+scraper/downloads/
