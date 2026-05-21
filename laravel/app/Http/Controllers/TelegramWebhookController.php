@@ -57,9 +57,10 @@ class TelegramWebhookController extends Controller
             ));
 
             // Lưu/cập nhật thông tin user để có thể resolve @username → chat_id sau này
-            if ($from) {
+            $fromId = (string) data_get($from, 'id', '');
+            if ($from && $fromId !== '') {
                 TelegramUser::updateOrCreate(
-                    ['chat_id' => $chatId],
+                    ['chat_id' => $fromId],
                     [
                         'username'   => data_get($from, 'username') ?: null,
                         'first_name' => data_get($from, 'first_name') ?: null,

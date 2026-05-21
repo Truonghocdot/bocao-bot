@@ -258,7 +258,7 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
-        Nhập `@username` của user hoặc group.
+        Nhập `@username` của user hoặc group public.
         Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
@@ -326,7 +326,7 @@ class TelegramCommandService
             🗓 *Lịch tự động hiện tại* — {$icon} {$status}
             ⏰ Giờ chạy: `{$schedule->cron_expression}`
             📄 Số trang tối đa: *{$limitLabel}*
-            📤 Gửi file tới: `{$targetChatId}`
+            📤 Gửi file tới: {$this->formatChatTargetLabel($targetChatId)}
 
             Mỗi ngày bot sẽ tự động cào dữ liệu DKKD của *ngày hôm trước* và gửi file PDF về tài khoản trên.
 
@@ -427,7 +427,7 @@ class TelegramCommandService
         📤 *Bước 3/3 — Nơi nhận file*
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
-        Nhập `@username` của user hoặc group.
+        Nhập `@username` của user hoặc group public.
         Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
@@ -615,11 +615,6 @@ class TelegramCommandService
         return in_array(mb_strtolower(trim($input)), self::CURRENT_GROUP_KEYWORDS, true);
     }
 
-    protected function currentChat(): ?TelegramChat
-    {
-        return TelegramChat::where('chat_id', request()->all()['message']['chat']['id'] ?? request()->all()['edited_message']['chat']['id'] ?? request()->all()['callback_query']['message']['chat']['id'] ?? null)->first();
-    }
-
     protected function resolveTargetChat(string $input, string $currentChatId): ?array
     {
         $trimmed = trim($input);
@@ -652,15 +647,20 @@ class TelegramCommandService
         }
 
         $chat = TelegramChat::findByUsername($trimmed);
-        if (! $chat) {
-            Log::warning("parseTargetChatId: username '{$trimmed}' not found in telegram_users table.");
-            return null;
+        if ($chat) {
+            return [
+                'chat_id' => $chat->chat_id,
+                'label' => $chat->displayLabel(),
+                'type' => $chat->type,
+            ];
         }
 
+        Log::info("resolveTargetChat: using unresolved public chat username '{$trimmed}' as target_chat_id.");
+
         return [
-            'chat_id' => $chat->chat_id,
-            'label' => $chat->displayLabel(),
-            'type' => $chat->type,
+            'chat_id' => $trimmed,
+            'label' => $trimmed,
+            'type' => 'public_username',
         ];
     }
 
@@ -674,7 +674,7 @@ class TelegramCommandService
             }
         }
 
-        return "❌ Không tìm thấy đích nhận `{$input}`.\nVui lòng kiểm tra lại `@username` của user/group, hoặc nhập `group` nếu muốn gửi vào chính group hiện tại.";
+        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` của user/group public, hoặc nhập `group` nếu muốn gửi vào chính group hiện tại.";
     }
 
     protected function formatChatTargetLabel(?string $chatId): string
@@ -693,6 +693,10 @@ class TelegramCommandService
 
         if ($user && $user->username) {
             return '*@' . $user->username . '*';
+        }
+
+        if (str_starts_with($chatId, '@')) {
+            return "*{$chatId}*";
         }
 
         return "`{$chatId}`";
