@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\TelegramChat;
 use App\Models\ScrapeJob;
 use App\Models\ScrapeSchedule;
 use App\Models\TelegramUser;
@@ -11,6 +12,15 @@ use Telegram\Bot\Laravel\Facades\Telegram;
 
 class TelegramCommandService
 {
+    protected const CURRENT_GROUP_KEYWORDS = [
+        'group',
+        'current-group',
+        'nhom nay',
+        'nhóm này',
+        'group hien tai',
+        'group hiện tại',
+    ];
+
     protected TelegramLogService $logService;
     protected ConversationService $conversation;
     protected ScraperService $scraperService;
@@ -246,10 +256,10 @@ class TelegramCommandService
         ]);
 
         $this->send($chatId, <<<TXT
-        📤 *Bạn muốn gửi file PDF cho @username nào?*
+        📤 *Bạn muốn gửi file PDF tới đâu?*
 
-        Nhập đúng định dạng `@username`.
-        _(Tài khoản đó phải đã từng nhắn tin với bot này.)_
+        Nhập `@username` của user hoặc group.
+        Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -259,10 +269,10 @@ class TelegramCommandService
     protected function onRunTargetInput(string $chatId, string $input): void
     {
         $session = $this->conversation->get($chatId);
-        $targetChatId = $this->parseTargetChatId($input, $chatId);
+        $target = $this->resolveTargetChat($input, $chatId);
 
-        if ($targetChatId === null) {
-            $this->send($chatId, "❌ Không tìm thấy tài khoản `{$input}`.\nVui lòng kiểm tra lại @username và đảm bảo tài khoản đó đã từng nhắn tin với bot này.");
+        if ($target === null) {
+            $this->send($chatId, $this->buildTargetChatResolutionError($input, $chatId));
             return;
         }
 
@@ -270,7 +280,7 @@ class TelegramCommandService
 
         $job = ScrapeJob::create([
             'chat_id'     => $chatId,
-            'target_chat_id' => $targetChatId,
+            'target_chat_id' => $target['chat_id'],
             'status'      => 'pending',
             'from_date'   => $session['from_date'],
             'to_date'     => $session['to_date'],
@@ -293,7 +303,7 @@ class TelegramCommandService
         📄 Tối đa: *{$session['limit_label']}*
         📎 Số file ước lượng: *{$estimatedFiles}*
         ⏱ Thời gian ước lượng: *{$estimatedDuration}*
-        📤 Gửi PDF tới: `{$targetChatId}`
+        📤 Gửi PDF tới: *{$target['label']}*
 
         Bot sẽ gửi từng file PDF sau khi tải xong.
         TXT);
@@ -414,11 +424,11 @@ class TelegramCommandService
         ✅ Số trang tối đa: *{$limitLabel}*.
 
         ─────────────────────
-        📤 *Bước 3/3 — Tài khoản nhận file*
-        File PDF sau khi tải xong sẽ được gửi tới tài khoản nào?
+        📤 *Bước 3/3 — Nơi nhận file*
+        File PDF sau khi tải xong sẽ được gửi tới đâu?
 
-        Nhập đúng định dạng `@username`.
-        _(Tài khoản đó phải đã từng nhắn tin với bot này ít nhất một lần.)_
+        Nhập `@username` của user hoặc group.
+        Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -427,10 +437,10 @@ class TelegramCommandService
     /** /schedule — Nhận chat nhận file → lưu lịch */
     protected function onScheduleTargetInput(string $chatId, string $input): void
     {
-        $targetChatId = $this->parseTargetChatId($input, $chatId);
+        $target = $this->resolveTargetChat($input, $chatId);
 
-        if ($targetChatId === null) {
-            $this->send($chatId, "❌ Không tìm thấy tài khoản `{$input}`.\nVui lòng kiểm tra lại @username và đảm bảo tài khoản đó đã từng nhắn tin với bot này.");
+        if ($target === null) {
+            $this->send($chatId, $this->buildTargetChatResolutionError($input, $chatId));
             return;
         }
 
@@ -440,7 +450,7 @@ class TelegramCommandService
         ScrapeSchedule::updateOrCreate(
             ['chat_id' => $chatId],
             [
-                'target_chat_id'  => $targetChatId,
+                'target_chat_id'  => $target['chat_id'],
                 'cron_expression' => $session['cron'],
                 'days_back'       => 1,
                 'max_records'     => $session['max_records'],
@@ -454,7 +464,7 @@ class TelegramCommandService
         ⏰ Giờ chạy: *{$session['time']}* mỗi ngày
         📅 Dữ liệu: ngày hôm trước tính từ lúc chạy
         📄 Số trang tối đa: *{$session['limit_label']}*
-        📤 Gửi file tới: `{$targetChatId}`
+        📤 Gửi file tới: *{$target['label']}*
 
         Bot sẽ tự động chạy theo lịch trên mà không cần thao tác thêm.
         Dùng /status để kiểm tra, /schedule để chỉnh sửa.
@@ -473,7 +483,7 @@ class TelegramCommandService
             $icon        = $schedule->is_active ? '✅' : '❌';
             $status      = $schedule->is_active ? 'BẬT' : 'TẮT';
             $targetChatId = $schedule->target_chat_id ?: $chatId;
-            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · {$limitLabel} · gửi `{$targetChatId}`";
+            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · {$limitLabel} · gửi {$this->formatChatTargetLabel($targetChatId)}";
         } else {
             $scheduleText = "_Chưa cấu hình — dùng /schedule_";
         }
@@ -600,27 +610,92 @@ class TelegramCommandService
         return [$n > 0 ? $n : null, $n > 0 ? "{$n} trang" : 'Tất cả'];
     }
 
-    /**
-     * Resolve @username → numeric chat_id bằng cách tra cứu trong bảng telegram_users.
-     * Bảng này được populate mỗi khi user nhắn tin với bot.
-     * Trả về chat_id dạng string số nếu tìm thấy, null nếu không hợp lệ hoặc chưa có trong DB.
-     */
-    protected function parseTargetChatId(string $input, string $currentChatId): ?string
+    protected function isCurrentGroupKeyword(string $input): bool
+    {
+        return in_array(mb_strtolower(trim($input)), self::CURRENT_GROUP_KEYWORDS, true);
+    }
+
+    protected function currentChat(): ?TelegramChat
+    {
+        return TelegramChat::where('chat_id', request()->all()['message']['chat']['id'] ?? request()->all()['edited_message']['chat']['id'] ?? request()->all()['callback_query']['message']['chat']['id'] ?? null)->first();
+    }
+
+    protected function resolveTargetChat(string $input, string $currentChatId): ?array
     {
         $trimmed = trim($input);
+
+        if ($this->isCurrentGroupKeyword($trimmed)) {
+            $currentChat = TelegramChat::where('chat_id', $currentChatId)->first();
+
+            if (! $currentChat || ! $currentChat->isGroupLike()) {
+                return null;
+            }
+
+            return [
+                'chat_id' => $currentChat->chat_id,
+                'label' => $currentChat->displayLabel(),
+                'type' => $currentChat->type,
+            ];
+        }
 
         if (!preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
             return null;
         }
 
         $user = TelegramUser::findByUsername($trimmed);
+        if ($user) {
+            return [
+                'chat_id' => $user->chat_id,
+                'label' => '@' . ltrim($trimmed, '@'),
+                'type' => 'private',
+            ];
+        }
 
-        if (!$user) {
+        $chat = TelegramChat::findByUsername($trimmed);
+        if (! $chat) {
             Log::warning("parseTargetChatId: username '{$trimmed}' not found in telegram_users table.");
             return null;
         }
 
-        return $user->chat_id;
+        return [
+            'chat_id' => $chat->chat_id,
+            'label' => $chat->displayLabel(),
+            'type' => $chat->type,
+        ];
+    }
+
+    protected function buildTargetChatResolutionError(string $input, string $currentChatId): string
+    {
+        if ($this->isCurrentGroupKeyword($input)) {
+            $currentChat = TelegramChat::where('chat_id', $currentChatId)->first();
+
+            if (! $currentChat || ! $currentChat->isGroupLike()) {
+                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.";
+            }
+        }
+
+        return "❌ Không tìm thấy đích nhận `{$input}`.\nVui lòng kiểm tra lại `@username` của user/group, hoặc nhập `group` nếu muốn gửi vào chính group hiện tại.";
+    }
+
+    protected function formatChatTargetLabel(?string $chatId): string
+    {
+        if (! $chatId) {
+            return '`không xác định`';
+        }
+
+        $chat = TelegramChat::where('chat_id', $chatId)->first();
+
+        if ($chat) {
+            return '*' . $chat->displayLabel() . '*';
+        }
+
+        $user = TelegramUser::where('chat_id', $chatId)->first();
+
+        if ($user && $user->username) {
+            return '*@' . $user->username . '*';
+        }
+
+        return "`{$chatId}`";
     }
 
     protected function makeDownloadKey(ScrapeJob $job): string

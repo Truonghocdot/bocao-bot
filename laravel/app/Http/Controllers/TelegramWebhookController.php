@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Models\TelegramChat;
 use App\Models\TelegramUser;
 use App\Services\TelegramCommandService;
 use App\Services\TelegramLogService;
@@ -34,6 +35,17 @@ class TelegramWebhookController extends Controller
             if ($chatId === '') {
                 return response()->json(['ok' => true]);
             }
+
+            TelegramChat::updateOrCreate(
+                ['chat_id' => $chatId],
+                [
+                    'type' => data_get($message, 'chat.type'),
+                    'title' => data_get($message, 'chat.title'),
+                    'username' => data_get($message, 'chat.username'),
+                    'is_bot_member' => true,
+                    'last_seen_at' => now(),
+                ]
+            );
 
             $from = data_get($payload, 'message.from')
                 ?: data_get($payload, 'edited_message.from')

@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+
 type Level = "debug" | "info" | "warn" | "error";
 
 const LEVEL_MAP: Record<Level, string> = {
@@ -53,12 +56,30 @@ function write(level: Level, args: unknown[]): void {
   const line = formatLine(level, args);
   const output = `${line}\n`;
 
+  writeToLogFile(output);
+
   if (level === "error" || level === "warn") {
     process.stderr.write(output);
     return;
   }
 
   process.stdout.write(output);
+}
+
+function logFilePath(): string {
+  return process.env.SCRAPER_LOG_FILE
+    || path.resolve(process.cwd(), "..", "laravel", "storage", "logs", "scraper.log");
+}
+
+function writeToLogFile(output: string): void {
+  const filePath = logFilePath();
+
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.appendFileSync(filePath, output, "utf8");
+  } catch {
+    // Do not break runtime logging if file logging is unavailable.
+  }
 }
 
 export function setupConsoleLogger(): void {
@@ -68,4 +89,3 @@ export function setupConsoleLogger(): void {
   console.error = (...args: unknown[]) => write("error", args);
   console.debug = (...args: unknown[]) => write("debug", args);
 }
-
