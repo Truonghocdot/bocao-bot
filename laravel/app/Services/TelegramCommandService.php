@@ -259,7 +259,8 @@ class TelegramCommandService
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
         Nhập `@username` của user hoặc group public.
-        Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
+        Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
+        Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -428,7 +429,8 @@ class TelegramCommandService
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
         Nhập `@username` của user hoặc group public.
-        Nếu đang chat trong group, bạn cũng có thể nhập `group` để gửi vào chính group hiện tại.
+        Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
+        Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -670,11 +672,11 @@ class TelegramCommandService
             $currentChat = TelegramChat::where('chat_id', $currentChatId)->first();
 
             if (! $currentChat || ! $currentChat->isGroupLike()) {
-                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.";
+                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.\nNếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.";
             }
         }
 
-        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` của user/group public, hoặc nhập `group` nếu muốn gửi vào chính group hiện tại.";
+        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` của user/group public. Nếu đang ở trong group, có thể nhập `group` để gửi vào chính group hiện tại.";
     }
 
     protected function formatChatTargetLabel(?string $chatId): string
