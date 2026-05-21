@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Jobs\DeliverPendingFilesJob;
 use App\Models\ScrapeJob;
 use App\Services\ScraperService;
+use App\Services\TelegramDeliveryService;
 use App\Services\TelegramLogService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -12,8 +13,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Telegram\Bot\Laravel\Facades\Telegram;
 use Telegram\Bot\FileUpload\InputFile;
+use Telegram\Bot\Laravel\Facades\Telegram;
 
 class RunScraperJob implements ShouldQueue
 {
@@ -42,7 +43,11 @@ class RunScraperJob implements ShouldQueue
         $this->jobRecord = $jobRecord;
     }
 
-    public function handle(ScraperService $scraperService, TelegramLogService $logService): void
+    public function handle(
+        ScraperService $scraperService,
+        TelegramLogService $logService,
+        TelegramDeliveryService $deliveryService
+    ): void
     {
         // Kiểm tra nếu user đã gửi /stop trước khi queue xử lý
         $this->jobRecord->refresh();
@@ -92,7 +97,7 @@ class RunScraperJob implements ShouldQueue
                 'zip_path'         => null,
             ]);
 
-            $sent = $this->deliverFiles($files, $wasStopped);
+            $sent = $this->deliverFiles($files, $wasStopped, $deliveryService);
 
             $this->jobRecord->update([
                 'status' => $wasStopped ? 'stopped' : 'completed',
@@ -105,7 +110,7 @@ class RunScraperJob implements ShouldQueue
             $logService->logException($e, null, "RunScraperJob #{$this->jobRecord->id}");
 
             $partialFiles = $this->collectDownloadedFiles();
-            $sent = count($partialFiles) > 0 ? $this->deliverFiles($partialFiles, false) : 0;
+            $sent = count($partialFiles) > 0 ? $this->deliverFiles($partialFiles, false, $deliveryService) : 0;
 
             $this->jobRecord->update([
                 'status'           => 'failed',
@@ -178,7 +183,7 @@ class RunScraperJob implements ShouldQueue
     /**
      * Gửi từng file PDF về Telegram.
      */
-    protected function deliverFiles(array $files, bool $wasStopped): int
+    protected function deliverFiles(array $files, bool $wasStopped, TelegramDeliveryService $deliveryService): int
     {
         $sent = 0;
         $targetChatId = $this->targetChatId();
@@ -191,7 +196,7 @@ class RunScraperJob implements ShouldQueue
             }
 
             try {
-                Telegram::sendDocument([
+                $deliveryService->sendDocumentToTarget([
                     'chat_id'  => $targetChatId,
                     'document' => InputFile::create($file),
                     'caption'  => "{$prefix}\n" . basename($file),
@@ -201,7 +206,7 @@ class RunScraperJob implements ShouldQueue
             } catch (\Throwable $e) {
                 if ($this->shouldFallbackToSourceChat($e, $targetChatId, $fallbackChatId)) {
                     try {
-                        Telegram::sendDocument([
+                        $deliveryService->sendDocumentToSource([
                             'chat_id'  => $fallbackChatId,
                             'document' => InputFile::create($file),
                             'caption'  => "{$prefix}\n" . basename($file),

@@ -3,14 +3,15 @@
 namespace App\Jobs;
 
 use App\Models\ScrapeJob;
+use App\Services\TelegramDeliveryService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Telegram\Bot\Laravel\Facades\Telegram;
 use Telegram\Bot\FileUpload\InputFile;
+use Telegram\Bot\Laravel\Facades\Telegram;
 
 /**
  * Recovery job: scan download_dir của một ScrapeJob đã failed/timeout
@@ -32,7 +33,7 @@ class DeliverPendingFilesJob implements ShouldQueue
         $this->jobRecord = $jobRecord;
     }
 
-    public function handle(): void
+    public function handle(TelegramDeliveryService $deliveryService): void
     {
         $this->jobRecord->refresh();
 
@@ -56,7 +57,7 @@ class DeliverPendingFilesJob implements ShouldQueue
 
         $this->notifySource("📦 Tìm thấy *" . count($files) . "* file PDF đã tải. Đang gửi...");
 
-        $sent = $this->deliverFiles($files);
+        $sent = $this->deliverFiles($files, $deliveryService);
 
         $this->jobRecord->update([
             'downloaded_count' => count($files),
@@ -66,7 +67,7 @@ class DeliverPendingFilesJob implements ShouldQueue
         $this->notifySource("✅ Đã gửi lại *{$sent}/" . count($files) . "* file PDF.");
     }
 
-    protected function deliverFiles(array $files): int
+    protected function deliverFiles(array $files, TelegramDeliveryService $deliveryService): int
     {
         $sent           = 0;
         $targetChatId   = $this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id;
@@ -78,7 +79,7 @@ class DeliverPendingFilesJob implements ShouldQueue
             }
 
             try {
-                Telegram::sendDocument([
+                $deliveryService->sendDocumentToTarget([
                     'chat_id'  => $targetChatId,
                     'document' => InputFile::create($file),
                     'caption'  => "PDF DKKD\n" . basename($file),
@@ -93,7 +94,7 @@ class DeliverPendingFilesJob implements ShouldQueue
 
                 if ($targetUnavailable && $targetChatId !== $fallbackChatId) {
                     try {
-                        Telegram::sendDocument([
+                        $deliveryService->sendDocumentToSource([
                             'chat_id'  => $fallbackChatId,
                             'document' => InputFile::create($file),
                             'caption'  => "PDF DKKD\n" . basename($file),

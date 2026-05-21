@@ -44,9 +44,9 @@ return [
             ],
         ],
 
-        //        'mySecondBot' => [
-        //            'token' => '123456:abc',
-        //        ],
+        'delivery' => [
+            'token' => env('TELEGRAM_DELIVERY_BOT_TOKEN', env('TELEGRAM_BOT_TOKEN', 'YOUR-BOT-TOKEN')),
+        ],
     ],
 
     /*
@@ -83,6 +83,17 @@ return [
     |
     */
     'access_password' => env('TELEGRAM_ACCESS_PASSWORD'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delivery Bot
+    |--------------------------------------------------------------------------
+    |
+    | PDF files are sent with this bot when TELEGRAM_DELIVERY_BOT_TOKEN is set.
+    | Command replies and private-chat notifications still use the default bot.
+    |
+    */
+    'delivery_bot' => env('TELEGRAM_DELIVERY_BOT_NAME', 'delivery'),
 
     /*
     |--------------------------------------------------------------------------

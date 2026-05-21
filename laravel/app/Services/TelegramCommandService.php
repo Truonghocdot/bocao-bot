@@ -261,6 +261,7 @@ class TelegramCommandService
         Nhập `@username` của user hoặc group public.
         Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
         Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
+        Group nhận file cần thêm bot gửi file và cho phép bot gửi tài liệu.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -431,6 +432,7 @@ class TelegramCommandService
         Nhập `@username` của user hoặc group public.
         Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
         Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
+        Group nhận file cần thêm bot gửi file và cho phép bot gửi tài liệu.
 
         _Hoặc /cancel để huỷ._
         TXT);
