@@ -259,9 +259,8 @@ class TelegramCommandService
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
         Nhập một trong các giá trị sau:
-        - `@group_username` hoặc `@username`
+        - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
-        - `group` nếu đang chạy lệnh trong chính group cần nhận file
 
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
@@ -434,9 +433,8 @@ class TelegramCommandService
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
         Nhập một trong các giá trị sau:
-        - `@group_username` hoặc `@username`
+        - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
-        - `group` nếu đang chạy lệnh trong chính group cần nhận file
 
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
@@ -698,15 +696,7 @@ class TelegramCommandService
 
     protected function buildTargetChatResolutionError(string $input, string $currentChatId): string
     {
-        if ($this->isCurrentGroupKeyword($input)) {
-            $currentChat = TelegramChat::where('chat_id', $currentChatId)->first();
-
-            if (! $currentChat || ! $currentChat->isGroupLike()) {
-                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.\nNếu đang chat riêng với bot, hãy nhập `@group_username` hoặc `chat_id` do bot gửi file trả về.";
-            }
-        }
-
-        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username`, `chat_id` do bot gửi file trả về, hoặc `group` nếu đang ở trong group cần nhận file.";
+        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` hoặc `chat_id` do bot gửi file trả về.";
     }
 
     protected function formatTargetWarning(array $target): string

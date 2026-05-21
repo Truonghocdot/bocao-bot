@@ -18,6 +18,13 @@ class TelegramDeliveryService
 
     protected function deliveryBotName(): string
     {
-        return (string) config('telegram.delivery_bot', 'delivery');
+        $botName = (string) config('telegram.delivery_bot', 'delivery');
+        
+        if (!config("telegram.bots.{$botName}")) {
+            \Illuminate\Support\Facades\Log::warning("TelegramDeliveryService: Bot [{$botName}] is not configured in config/telegram.php. Falling back to 'delivery'.");
+            return 'delivery';
+        }
+        
+        return $botName;
     }
 }
