@@ -258,10 +258,12 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
-        Nhập `@username` của user hoặc group public.
-        Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
-        Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
-        Group nhận file cần thêm bot gửi file và cho phép bot gửi tài liệu.
+        Nhập một trong các giá trị sau:
+        - `@group_username` hoặc `@username`
+        - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
+        - `group` nếu đang chạy lệnh trong chính group cần nhận file
+
+        Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -298,6 +300,7 @@ class TelegramCommandService
         $timeEstimate = $this->scraperService->estimateRunTime($session['max_records']);
         $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
+        $targetWarning = $this->formatTargetWarning($target);
 
         $this->send($chatId, <<<TXT
         🚀 *Đã đưa vào hàng đợi!*
@@ -306,6 +309,7 @@ class TelegramCommandService
         📎 Số file ước lượng: *{$estimatedFiles}*
         ⏱ Thời gian ước lượng: *{$estimatedDuration}*
         📤 Gửi PDF tới: *{$target['label']}*
+        {$targetWarning}
 
         Bot sẽ gửi từng file PDF sau khi tải xong.
         TXT);
@@ -429,10 +433,12 @@ class TelegramCommandService
         📤 *Bước 3/3 — Nơi nhận file*
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
-        Nhập `@username` của user hoặc group public.
-        Nếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.
-        Từ trong group, có thể nhập `group` để gửi vào chính group hiện tại.
-        Group nhận file cần thêm bot gửi file và cho phép bot gửi tài liệu.
+        Nhập một trong các giá trị sau:
+        - `@group_username` hoặc `@username`
+        - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
+        - `group` nếu đang chạy lệnh trong chính group cần nhận file
+
+        Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._
         TXT);
@@ -462,6 +468,8 @@ class TelegramCommandService
             ]
         );
 
+        $targetWarning = $this->formatTargetWarning($target);
+
         $this->send($chatId, <<<TXT
         ✅ *Lịch tự động đã được lưu!*
 
@@ -469,6 +477,7 @@ class TelegramCommandService
         📅 Dữ liệu: ngày hôm trước tính từ lúc chạy
         📄 Số trang tối đa: *{$session['limit_label']}*
         📤 Gửi file tới: *{$target['label']}*
+        {$targetWarning}
 
         Bot sẽ tự động chạy theo lịch trên mà không cần thao tác thêm.
         Dùng /status để kiểm tra, /schedule để chỉnh sửa.
@@ -637,6 +646,25 @@ class TelegramCommandService
             ];
         }
 
+        if (preg_match('/^-\d{5,}$/', $trimmed)) {
+            $chat = TelegramChat::where('chat_id', $trimmed)->first();
+
+            if ($chat) {
+                return [
+                    'chat_id' => $chat->chat_id,
+                    'label' => $chat->displayLabel(),
+                    'type' => $chat->type,
+                ];
+            }
+
+            return [
+                'chat_id' => $trimmed,
+                'label' => $trimmed,
+                'type' => 'raw_chat_id',
+                'warning' => 'Chưa thấy group này trong dữ liệu bot gửi file. Hãy chắc chắn bot gửi file đã được thêm vào group và có quyền gửi tài liệu.',
+            ];
+        }
+
         if (!preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
             return null;
         }
@@ -674,11 +702,18 @@ class TelegramCommandService
             $currentChat = TelegramChat::where('chat_id', $currentChatId)->first();
 
             if (! $currentChat || ! $currentChat->isGroupLike()) {
-                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.\nNếu đang chat riêng với bot và muốn gửi tới group, hãy nhập trực tiếp `@group_username`.";
+                return "❌ `group` chỉ dùng được khi bạn đang chat với bot trong một group hoặc supergroup.\nNếu đang chat riêng với bot, hãy nhập `@group_username` hoặc `chat_id` do bot gửi file trả về.";
             }
         }
 
-        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` của user/group public. Nếu đang ở trong group, có thể nhập `group` để gửi vào chính group hiện tại.";
+        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username`, `chat_id` do bot gửi file trả về, hoặc `group` nếu đang ở trong group cần nhận file.";
+    }
+
+    protected function formatTargetWarning(array $target): string
+    {
+        $warning = trim((string) ($target['warning'] ?? ''));
+
+        return $warning !== '' ? "\n⚠️ {$warning}" : '';
     }
 
     protected function formatChatTargetLabel(?string $chatId): string

@@ -46,6 +46,7 @@ return [
 
         'delivery' => [
             'token' => env('TELEGRAM_DELIVERY_BOT_TOKEN', env('TELEGRAM_BOT_TOKEN', 'YOUR-BOT-TOKEN')),
+            'webhook_url' => env('TELEGRAM_DELIVERY_WEBHOOK_URL', 'YOUR-DELIVERY-BOT-WEBHOOK-URL'),
         ],
     ],
 
