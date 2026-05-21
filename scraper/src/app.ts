@@ -25,6 +25,15 @@ const server = app.listen(PORT, "127.0.0.1", () => {
   console.log(`🚀 Scraper service running on http://127.0.0.1:${PORT}`);
 });
 
+server.on("error", (error) => {
+  console.error("Scraper server failed", error);
+  process.exit(1);
+});
+
+const keepAlive = setInterval(() => {
+  // Keep the service process alive under pnpm/tsx + supervisor.
+}, 60 * 60 * 1000);
+
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled rejection in scraper process", reason);
 });
@@ -35,5 +44,6 @@ process.on("uncaughtException", (error) => {
 
 process.on("SIGTERM", () => {
   console.info("Received SIGTERM, shutting down scraper server");
+  clearInterval(keepAlive);
   server.close(() => process.exit(0));
 });
