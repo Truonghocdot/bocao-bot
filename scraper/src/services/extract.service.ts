@@ -64,6 +64,39 @@ export interface RowDetail {
   userAgent?: string;
 }
 
+/**
+ * Kiểm tra xem bảng kết quả có trống không.
+ * Trả về true nếu thấy "Danh sách trống" hoặc tổng cộng = 0.
+ */
+export async function isEmptyResultTable(page: Page): Promise<boolean> {
+  try {
+    const tableHtml = await page
+      .locator("#ctl00_C_CtlList")
+      .innerHTML({ timeout: 10000 });
+
+    if (tableHtml.includes("Danh sách trống")) {
+      return true;
+    }
+
+    // Fallback: kiểm tra tổng cộng = 0
+    const totalText = await page
+      .locator("i")
+      .filter({ hasText: "Tổng cộng" })
+      .innerText({ timeout: 5000 })
+      .catch(() => "");
+
+    const match = totalText.match(/(\d+)/);
+    if (match && parseInt(match[1], 10) === 0) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    // Nếu không tìm thấy bảng, coi như trống
+    return true;
+  }
+}
+
 export async function goToPage(page: Page, pageNumber: number) {
   assertNotDkkdErrorPage(page, `goToPage:${pageNumber}:start`);
   console.log(`➡️ Going to page ${pageNumber}`);
@@ -232,7 +265,7 @@ export async function downloadAllPdfs(
       const btn = page.locator(PDF_BTN).nth(row.rowIndex);
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: 60000 }),
-        btn.click({ timeout: 30000 }),
+        btn.click({ timeout: 10000, noWaitAfter: true }),
       ]);
 
       await download.saveAs(path.join(downloadDir, row.filename));

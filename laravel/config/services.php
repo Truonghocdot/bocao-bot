@@ -43,7 +43,7 @@ return [
         'seconds_per_page' => (float) env('SCRAPER_SECONDS_PER_PAGE', 8),
         'seconds_per_file' => (float) env('SCRAPER_SECONDS_PER_FILE', 2),
         'rows_per_page' => (int) env('SCRAPER_ROWS_PER_PAGE', 20),
-        'timeout_buffer' => (float) env('SCRAPER_TIMEOUT_BUFFER', 1.25),
+        'timeout_buffer' => (float) env('SCRAPER_TIMEOUT_BUFFER', 1.3),
     ],
 
 ];

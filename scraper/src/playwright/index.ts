@@ -1,6 +1,6 @@
 import { createBrowser, createPage } from "../browser/index.js";
 import { openSite, fillSearchForm, submitSearch } from "../services/form.service.js";
-import { collectAllRows, downloadAllPdfs, RowDetail } from "../services/extract.service.js";
+import { collectAllRows, downloadAllPdfs, RowDetail, isEmptyResultTable } from "../services/extract.service.js";
 import { solveCaptcha } from "../captcha/index.js";
 import { generateDownloadDir } from "../utils/date.js";
 import { isDebug } from "../utils/contants.js";
@@ -26,6 +26,7 @@ export interface ScrapeResult {
 export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> {
   const downloadDir = generateDownloadDir(payload.downloadKey);
   const absoluteDownloadDir = path.resolve(downloadDir);
+  const MAX_RETRIES = 3;
 
   // Chỉ tạo thư mục nếu không phải dryRun
   if (!payload.dryRun) {
@@ -37,16 +38,38 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
   try {
     await openSite(page);
-
     await fillSearchForm(page, payload.fromDate, payload.toDate);
 
-    console.log("🤖 Solving captcha...");
-    const token = await solveCaptcha(page.url());
+    let allItems: RowDetail[] = [];
 
-    await submitSearch(page, token);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      console.log(`🤖 Solving captcha... (attempt ${attempt}/${MAX_RETRIES})`);
+      const token = await solveCaptcha(page.url());
 
-    // Thu thập danh sách rows trên tất cả các trang
-    const allItems = await collectAllRows(page, payload.limit);
+      await submitSearch(page, token);
+
+      // Kiểm tra bảng có trống không
+      const empty = await isEmptyResultTable(page);
+
+      if (empty) {
+        console.warn(`⚠️ Kết quả trống sau lần ${attempt}. ${
+          attempt < MAX_RETRIES ? "Thử lại (re-solve captcha)..." : "Hết lần thử, kết thúc."
+        }`);
+
+        if (attempt < MAX_RETRIES) {
+          // Không cần load lại trang, chỉ cần re-solve captcha và submit lại
+          // fillSearchForm không cần chạy lại vì form ASP.NET giữ nguyên state
+          continue;
+        }
+
+        // Hết retry — trả về kết quả rỗng thay vì crash
+        return { downloaded: 0, downloadDir: absoluteDownloadDir };
+      }
+
+      // Có kết quả — thu thập rows và thoát vòng lặp retry
+      allItems = await collectAllRows(page, payload.limit);
+      break;
+    }
 
     console.log(`📥 Sẽ xử lý: ${allItems.length} bản`);
 
