@@ -1,5 +1,6 @@
 import axios from "axios";
 import fs from "fs";
+import https from "https";
 import path from "path";
 import pLimit from "p-limit";
 import { RowDetail } from "../services/extract.service.js";
@@ -9,6 +10,7 @@ const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60000;
 const DEFAULT_DOWNLOAD_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 2000;
 const DEFAULT_WORKER_DELAY_MS = 400;
+const DEFAULT_TLS_REJECT_UNAUTHORIZED = false;
 
 function getDownloadConcurrency(): number {
   return Math.max(1, Number(process.env.DOWNLOAD_CONCURRENCY || DEFAULT_DOWNLOAD_CONCURRENCY));
@@ -28,6 +30,15 @@ function getWorkerDelayMs(): number {
 
 function getRetryBaseDelayMs(): number {
   return Math.max(250, Number(process.env.DOWNLOAD_RETRY_BASE_DELAY_MS || DEFAULT_RETRY_BASE_DELAY_MS));
+}
+
+function shouldRejectUnauthorized(): boolean {
+  const defaultValue = DEFAULT_TLS_REJECT_UNAUTHORIZED ? "1" : "0";
+  const raw = String(process.env.DOWNLOAD_TLS_REJECT_UNAUTHORIZED ?? defaultValue)
+    .trim()
+    .toLowerCase();
+
+  return !["0", "false", "no", "off"].includes(raw);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -77,6 +88,9 @@ async function downloadSinglePdf(row: RowDetail, downloadDir: string): Promise<s
     responseType: "stream",
     timeout: getDownloadTimeoutMs(),
     maxRedirects: 5,
+    httpsAgent: new https.Agent({
+      rejectUnauthorized: shouldRejectUnauthorized(),
+    }),
     validateStatus: (status) => status >= 200 && status < 400,
   });
 
