@@ -1,7 +1,8 @@
 import { createBrowser, createPage } from "../browser/index.js";
 import { openSite, fillSearchForm, submitSearch } from "../services/form.service.js";
-import { collectAllRows, downloadAllPdfs, RowDetail, isEmptyResultTable } from "../services/extract.service.js";
+import { collectAllRows, RowDetail, isEmptyResultTable } from "../services/extract.service.js";
 import { solveCaptcha } from "../captcha/index.js";
+import { downloadAllPdfsParallel } from "../download/index.js";
 import { generateDownloadDir } from "../utils/date.js";
 import { isDebug } from "../utils/contants.js";
 import fs from "fs";
@@ -98,14 +99,11 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     /* ----------------------------------------------------------------
      | FULL RUN — Tải PDF
      * -------------------------------------------------------------- */
-    await downloadAllPdfs(page, allItems, downloadDir); 
+    const downloadedPaths = await downloadAllPdfsParallel(allItems, downloadDir);
 
-    const downloadedFiles = fs.existsSync(downloadDir)
-      ? fs.readdirSync(downloadDir)
-          .filter((f) => f.endsWith(".pdf"))
-          .sort()
-          .map((file) => path.join(absoluteDownloadDir, file))
-      : [];
+    const downloadedFiles = downloadedPaths
+      .map((file) => path.resolve(file))
+      .sort();
 
     if (downloadedFiles.length === 0) {
       console.log("📭 Không có file PDF nào được tải.");

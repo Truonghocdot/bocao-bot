@@ -202,7 +202,7 @@ class RunScraperJob implements ShouldQueue
                     'caption'  => "{$prefix}\n" . basename($file),
                 ]);
                 $sent++;
-                usleep(250000);
+                $deliveryService->pauseBetweenDocumentSends();
             } catch (\Throwable $e) {
                 if ($this->shouldFallbackToSourceChat($e, $targetChatId, $fallbackChatId)) {
                     try {
@@ -212,7 +212,7 @@ class RunScraperJob implements ShouldQueue
                             'caption'  => "{$prefix}\n" . basename($file),
                         ]);
                         $sent++;
-                        usleep(250000);
+                        $deliveryService->pauseBetweenDocumentSends();
                         continue;
                     } catch (\Throwable $fallbackError) {
                         Log::warning("RunScraperJob: Failed fallback send PDF {$file} — " . $fallbackError->getMessage());

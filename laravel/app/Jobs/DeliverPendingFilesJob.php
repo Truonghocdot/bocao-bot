@@ -85,7 +85,7 @@ class DeliverPendingFilesJob implements ShouldQueue
                     'caption'  => "PDF DKKD\n" . basename($file),
                 ]);
                 $sent++;
-                usleep(250000);
+                $deliveryService->pauseBetweenDocumentSends();
             } catch (\Throwable $e) {
                 $msg = mb_strtolower($e->getMessage());
                 $targetUnavailable = str_contains($msg, 'chat not found')
@@ -100,7 +100,7 @@ class DeliverPendingFilesJob implements ShouldQueue
                             'caption'  => "PDF DKKD\n" . basename($file),
                         ]);
                         $sent++;
-                        usleep(250000);
+                        $deliveryService->pauseBetweenDocumentSends();
                         continue;
                     } catch (\Throwable $fallbackErr) {
                         Log::warning("DeliverPendingFilesJob: fallback send failed — " . $fallbackErr->getMessage());

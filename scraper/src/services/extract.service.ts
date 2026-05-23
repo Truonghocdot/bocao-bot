@@ -1,56 +1,7 @@
 import { Page } from "@playwright/test";
-import path from "path";
-import fs from "fs";
 import { assertNotDkkdErrorPage } from "./form.service.js";
 
 const PDF_BTN = 'input[id*="LnkGetPDFActive"]';
-
-function isTimeoutError(error: any): boolean {
-  const message = String(error?.message ?? "");
-  return message.includes("Timeout") || message.includes("timed out");
-}
-
-function safeScreenshotName(row: RowDetail): string {
-  const baseName = row.filename.replace(/\.pdf$/i, "");
-  return baseName
-    .replace(/[^\p{L}\p{N}_-]/gu, "_")
-    .slice(0, 120);
-}
-
-async function captureDownloadErrorScreenshot(
-  page: Page,
-  row: RowDetail,
-  error: any
-): Promise<void> {
-  if (page.isClosed()) {
-    return;
-  }
-
-  const storageRoot = path.resolve(process.cwd(), "..", "storage");
-  const errDir = path.join(storageRoot, "errors");
-  fs.mkdirSync(errDir, { recursive: true });
-
-  const screenshotPath = path.join(
-    errDir,
-    `download-timeout-${String(row.globalIndex + 1).padStart(4, "0")}-${safeScreenshotName(row)}-${Date.now()}.png`
-  );
-
-  try {
-    await page.screenshot({
-      path: screenshotPath,
-      fullPage: true,
-    });
-
-    console.warn(
-      `📸 Đã lưu screenshot lỗi timeout file #${row.globalIndex + 1}: ${screenshotPath}`
-    );
-  } catch (screenshotError: any) {
-    console.warn(
-      `⚠️ Không thể chụp screenshot lỗi file #${row.globalIndex + 1}: ${screenshotError.message}`
-    );
-    console.warn(`⚠️ Lỗi gốc: ${error.message}`);
-  }
-}
 
 export interface RowDetail {
   globalIndex: number;
@@ -237,59 +188,6 @@ export async function collectAllRows(
   }
 
   return allRows;
-}
-
-export async function downloadAllPdfs(
-  page: Page,
-  rows: RowDetail[],
-  downloadDir: string
-) {
-  console.log(`🚀 Bắt đầu tải ${rows.length} PDF...`);
-
-  const activePageText = await page.locator('.Pager span').first().innerText().catch(() => "1");
-  let currentPage = parseInt(activePageText.trim(), 10) || 1;
-
-  for (const row of rows) {
-    // Nếu browser/context đã bị đóng thì dừng hẳn — không thể tiếp tục
-    if (page.isClosed()) {
-      console.warn(`⚠️ Browser đã đóng tại file #${row.globalIndex + 1}, dừng tải.`);
-      break;
-    }
-
-    if (row.pageIndex !== currentPage) {
-      await goToPage(page, row.pageIndex);
-      currentPage = row.pageIndex;
-    }
-
-    try {
-      const btn = page.locator(PDF_BTN).nth(row.rowIndex);
-      const [download] = await Promise.all([
-        page.waitForEvent("download", { timeout: 60000 }),
-        btn.click({ timeout: 10000, noWaitAfter: true }),
-      ]);
-
-      await download.saveAs(path.join(downloadDir, row.filename));
-
-      console.log(`⬇️ Downloaded: ${row.filename}`);
-    } catch (err: any) {
-      // Browser/context bị đóng — không thể tiếp tục dù muốn
-      if (
-        err.message?.includes('Target page, context or browser has been closed') ||
-        err.message?.includes('browser has been closed') ||
-        page.isClosed()
-      ) {
-        console.warn(`⚠️ Browser đóng khi tải file #${row.globalIndex + 1}, dừng tải.`);
-        break;
-      }
-
-      // Lỗi click timeout hoặc lỗi download đơn lẻ — bỏ qua, tiếp tục file tiếp theo
-      if (isTimeoutError(err)) {
-        await captureDownloadErrorScreenshot(page, row, err);
-      }
-
-      console.warn(`⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}): ${err.message}`);
-    }
-  }
 }
 
 const ROWS_PER_PAGE = 20;

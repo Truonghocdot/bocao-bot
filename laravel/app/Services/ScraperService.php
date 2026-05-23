@@ -41,7 +41,7 @@ class ScraperService
         $secondsPerPage = max(0, (float) config('services.scraper.seconds_per_page', 8));
         $secondsPerFile = max(0, (float) config('services.scraper.seconds_per_file', 2));
         $rowsPerPage = max(1, (int) config('services.scraper.rows_per_page', 20));
-        $buffer = max(1, (float) config('services.scraper.timeout_buffer', 1.25));
+        $buffer = max(1, (float) config('services.scraper.timeout_buffer', 1.3));
         $minTimeout = max(1, (int) config('services.scraper.min_timeout', 180));
         $maxTimeout = max($minTimeout, (int) config('services.scraper.max_timeout', 4800));
 
