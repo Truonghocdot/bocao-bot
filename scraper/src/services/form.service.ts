@@ -1,4 +1,6 @@
 import { Page } from "@playwright/test";
+import fs from "fs";
+import path from "path";
 import {
   DKKD_AUTH_REDIRECT_CODE,
   DKKD_AUTH_REDIRECT_MESSAGE,
@@ -22,6 +24,31 @@ function isDkkdAuthRedirectUrl(url: string): boolean {
 
 function makeDkkdSiteError(step: string): Error {
   return new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+}
+
+async function captureFormErrorScreenshot(page: Page, step: string): Promise<void> {
+  if (page.isClosed()) {
+    return;
+  }
+
+  const storageRoot = path.resolve(process.cwd(), "..", "storage");
+  const errDir = path.join(storageRoot, "errors");
+  fs.mkdirSync(errDir, { recursive: true });
+
+  const screenshotPath = path.join(
+    errDir,
+    `form-error-${step.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.png`
+  );
+
+  try {
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+    });
+    console.warn(`📸 Đã lưu screenshot lỗi form [${step}]: ${screenshotPath}`);
+  } catch (error: any) {
+    console.warn(`⚠️ Không thể chụp screenshot lỗi form [${step}]: ${error.message}`);
+  }
 }
 
 export function assertNotDkkdErrorPage(page: Page, step: string): void {
@@ -48,6 +75,8 @@ async function waitForSelectorOrDkkdError(
       throw makeDkkdSiteError(step);
     }
   } catch (err: any) {
+    await captureFormErrorScreenshot(page, step);
+
     // Nếu timeout xảy ra, kiểm tra URL hiện tại — trang có thể đã redirect
     // sang error page nhưng chưa kịp resolve Promise.race
     if (isDkkdErrorPageUrl(page.url())) {
