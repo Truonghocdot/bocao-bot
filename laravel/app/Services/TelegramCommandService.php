@@ -72,6 +72,11 @@ class TelegramCommandService
 
             // Lệnh /cancel thoát mọi luồng
             if (str_starts_with($text, '/cancel')) {
+                if ($this->isScheduleConversationState($state)) {
+                    $this->cancelScheduleSetup($chatId);
+                    return;
+                }
+
                 $this->conversation->clear($chatId);
                 $this->send($chatId, "↩️ Đã huỷ. Gõ /start để xem các lệnh.");
                 return;
@@ -262,6 +267,7 @@ class TelegramCommandService
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
 
+        Lưu ý: nếu nhập `@username` thì tài khoản đó phải *đã từng chat với bot chính* trước đó.
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._
@@ -337,8 +343,8 @@ class TelegramCommandService
 
             ─────────────────────
             Bạn muốn làm gì?
-            • Nhập giờ mới (VD: `07:30`) để *cài đặt lại lịch*
-            • Gõ /cancel để *giữ nguyên*
+            • Nhập lại *thời điểm muốn job chạy* mỗi ngày (VD: `07:30`) để cài đặt lại lịch
+            • Gõ /cancel để *xoá lịch hiện tại*
             TXT);
 
             $this->conversation->transition($chatId, 'await_time_schedule');
@@ -353,13 +359,13 @@ class TelegramCommandService
         Bot sẽ tự động cào dữ liệu DKKD mỗi ngày và gửi file PDF về tài khoản bạn chỉ định — không cần thao tác thủ công.
 
         ─────────────────────
-        ⏰ *Bước 1/3 — Giờ chạy*
-        Bạn muốn bot chạy vào lúc mấy giờ mỗi ngày?
+        ⏰ *Bước 1/3 — Thời Điểm Chạy Job*
+        Bạn muốn job tự động này chạy vào thời điểm nào mỗi ngày?
 
         Nhập theo định dạng `HH:mm`
         Ví dụ: `07:00` → chạy lúc 7h sáng, lấy dữ liệu của ngày hôm trước
 
-        _Hoặc /cancel để huỷ._
+        _Hoặc /cancel để huỷ thiết lập._
         TXT);
     }
 
@@ -399,7 +405,7 @@ class TelegramCommandService
         $this->conversation->transition($chatId, 'await_pages_schedule', ['cron' => $cron, 'time' => trim($input)]);
 
         $this->send($chatId, <<<TXT
-        ✅ Giờ chạy: *{$input}* mỗi ngày.
+        ✅ Thời điểm chạy job: *{$input}* mỗi ngày.
 
         ─────────────────────
         📄 *Bước 2/3 — Số trang*
@@ -436,6 +442,7 @@ class TelegramCommandService
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
 
+        Lưu ý: nếu nhập `@username` thì tài khoản đó phải *đã từng chat với bot chính* trước đó.
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._
@@ -554,6 +561,29 @@ class TelegramCommandService
     {
         if (empty($text)) return;
         $this->send($chatId, "❓ Lệnh không được nhận dạng. Gõ /start để xem danh sách lệnh.");
+    }
+
+    protected function isScheduleConversationState(?string $state): bool
+    {
+        return in_array($state, [
+            'await_time_schedule',
+            'await_pages_schedule',
+            'await_target_schedule',
+        ], true);
+    }
+
+    protected function cancelScheduleSetup(string $chatId): void
+    {
+        $this->conversation->clear($chatId);
+
+        $deleted = ScrapeSchedule::where('chat_id', $chatId)->delete() > 0;
+
+        $this->send(
+            $chatId,
+            $deleted
+                ? "↩️ Đã huỷ thiết lập và xoá lịch tự động hiện tại."
+                : "↩️ Đã huỷ thiết lập lịch tự động."
+        );
     }
 
     /* ===================================================================
