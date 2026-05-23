@@ -267,7 +267,9 @@ class TelegramCommandService
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
 
-        Lưu ý: nếu nhập `@username` thì tài khoản đó phải *đã từng chat với bot chính* trước đó.
+        Lưu ý:
+        - Nếu nhập `@username` thì file sẽ được gửi bằng *bot chính*, và tài khoản đó phải *đã từng chat với bot chính* trước đó.
+        - Nếu nhập `chat_id` của group thì file sẽ được gửi bằng *bot gửi file*.
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._
@@ -442,7 +444,9 @@ class TelegramCommandService
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
 
-        Lưu ý: nếu nhập `@username` thì tài khoản đó phải *đã từng chat với bot chính* trước đó.
+        Lưu ý:
+        - Nếu nhập `@username` thì file sẽ được gửi bằng *bot chính*, và tài khoản đó phải *đã từng chat với bot chính* trước đó.
+        - Nếu nhập `chat_id` của group thì file sẽ được gửi bằng *bot gửi file*.
         Để lấy `chat_id`, hãy thêm bot gửi file vào group rồi copy ID bot đó trả về.
 
         _Hoặc /cancel để huỷ._

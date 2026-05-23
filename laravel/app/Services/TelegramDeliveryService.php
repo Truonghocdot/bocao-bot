@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\TelegramChat;
+use App\Models\TelegramUser;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Exceptions\TelegramResponseException;
 use Telegram\Bot\Laravel\Facades\Telegram;
@@ -13,8 +15,10 @@ class TelegramDeliveryService
 
     public function sendDocumentToTarget(array $params): mixed
     {
+        $chatId = (string) ($params['chat_id'] ?? '');
+
         return $this->sendWithRateLimitRetry(
-            fn () => Telegram::bot($this->deliveryBotName())->sendDocument($params)
+            fn () => $this->telegramBotForChat($chatId)->sendDocument($params)
         );
     }
 
@@ -40,6 +44,38 @@ class TelegramDeliveryService
         }
         
         return $botName;
+    }
+
+    protected function telegramBotForChat(string $chatId): mixed
+    {
+        if ($this->shouldUsePrimaryBot($chatId)) {
+            return Telegram::bot(config('telegram.default', 'mybot'));
+        }
+
+        return Telegram::bot($this->deliveryBotName());
+    }
+
+    protected function shouldUsePrimaryBot(string $chatId): bool
+    {
+        if ($chatId === '') {
+            return true;
+        }
+
+        if (str_starts_with($chatId, '@')) {
+            return true;
+        }
+
+        $chat = TelegramChat::where('chat_id', $chatId)->first();
+        if ($chat) {
+            return ! $chat->isGroupLike();
+        }
+
+        $user = TelegramUser::where('chat_id', $chatId)->first();
+        if ($user) {
+            return true;
+        }
+
+        return ! str_starts_with($chatId, '-');
     }
 
     protected function sendWithRateLimitRetry(callable $send): mixed
