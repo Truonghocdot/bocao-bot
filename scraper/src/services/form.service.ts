@@ -7,19 +7,27 @@ import {
   DKKD_ERROR_CODE,
   DKKD_ERROR_MESSAGE,
   DKKD_ERROR_PATH,
-  DKKD_PATH_REDIRECT_ACT,
+  DKKD_LOGIN_PATH,
   SITE_URL,
 } from "../utils/contants.js";
 import { getEndDay, getStartDay } from "../utils/date.js";
 
 const MAX_AUTH_REDIRECT_RETRIES = 8;
+const MAX_LISTING_RECOVERY_RETRIES = 3;
+const ANNOUNCEMENT_TYPE_SELECTOR = "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld";
+const FROM_DATE_SELECTOR = "#ctl00_C_PUBLISH_DATEFilterFldFrom";
+const TO_DATE_SELECTOR = "#ctl00_C_PUBLISH_DATEFilterFldTo";
 
 function isDkkdErrorPageUrl(url: string): boolean {
   return url.includes(DKKD_ERROR_PATH);
 }
 
 function isDkkdAuthRedirectUrl(url: string): boolean {
-  return url.startsWith(DKKD_PATH_REDIRECT_ACT);
+  return url.includes(DKKD_LOGIN_PATH);
+}
+
+function isListingPageUrl(url: string): boolean {
+  return url.startsWith(SITE_URL);
 }
 
 function makeDkkdSiteError(step: string): Error {
@@ -86,6 +94,84 @@ async function waitForSelectorOrDkkdError(
   }
 }
 
+async function ensureOnListingPage(page: Page, step: string): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_LISTING_RECOVERY_RETRIES; attempt++) {
+    const currentUrl = page.url();
+
+    if (isDkkdErrorPageUrl(currentUrl)) {
+      throw makeDkkdSiteError(`${step}:attempt${attempt}`);
+    }
+
+    if (isListingPageUrl(currentUrl)) {
+      return;
+    }
+
+    if (isDkkdAuthRedirectUrl(currentUrl)) {
+      console.warn(
+        `⚠️ DKKD redirected to login before ${step}. Recovering to SITE_URL... attempt=${attempt}/${MAX_LISTING_RECOVERY_RETRIES}`
+      );
+    } else {
+      console.warn(
+        `⚠️ Unexpected page before ${step}: ${currentUrl}. Recovering to SITE_URL... attempt=${attempt}/${MAX_LISTING_RECOVERY_RETRIES}`
+      );
+    }
+
+    await page.goto(SITE_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+  }
+
+  throw new Error(`${DKKD_AUTH_REDIRECT_CODE}: ${DKKD_AUTH_REDIRECT_MESSAGE} [step=${step}]`);
+}
+
+async function assertSearchFormValues(
+  page: Page,
+  fromDate?: string,
+  toDate?: string
+): Promise<void> {
+  const expectedFromDate = fromDate || getStartDay();
+  const expectedToDate = toDate || getEndDay();
+
+  const state = await page.evaluate(
+    ({ announcementSelector, fromDateSelector, toDateSelector }) => {
+      const announcement = document.querySelector(announcementSelector) as HTMLSelectElement | null;
+      const from = document.querySelector(fromDateSelector) as HTMLInputElement | null;
+      const to = document.querySelector(toDateSelector) as HTMLInputElement | null;
+
+      return {
+        announcementType: announcement?.value?.trim() ?? "",
+        fromDate: from?.value?.trim() ?? "",
+        toDate: to?.value?.trim() ?? "",
+      };
+    },
+    {
+      announcementSelector: ANNOUNCEMENT_TYPE_SELECTOR,
+      fromDateSelector: FROM_DATE_SELECTOR,
+      toDateSelector: TO_DATE_SELECTOR,
+    }
+  );
+
+  const issues: string[] = [];
+
+  if (state.announcementType !== "NEW") {
+    issues.push(`announcementType='${state.announcementType || "empty"}'`);
+  }
+
+  if (state.fromDate !== expectedFromDate) {
+    issues.push(`fromDate='${state.fromDate || "empty"}' expected='${expectedFromDate}'`);
+  }
+
+  if (state.toDate !== expectedToDate) {
+    issues.push(`toDate='${state.toDate || "empty"}' expected='${expectedToDate}'`);
+  }
+
+  if (issues.length > 0) {
+    await captureFormErrorScreenshot(page, "submitSearch_form_values");
+    throw new Error(`SEARCH_FORM_STATE_INVALID: ${issues.join(", ")}`);
+  }
+}
+
 export async function openSite(page: Page) {
   for (let attempt = 1; attempt <= MAX_AUTH_REDIRECT_RETRIES; attempt++) {
     console.log(`🌐 Opening page... attempt ${attempt}/${MAX_AUTH_REDIRECT_RETRIES}`);
@@ -115,18 +201,19 @@ export async function openSite(page: Page) {
 }
 
 export async function fillSearchForm(page: Page, fromDate?: string, toDate?: string) {
+  await ensureOnListingPage(page, "fillSearchForm");
   assertNotDkkdErrorPage(page, "fillSearchForm:start");
   console.log("📌 Selecting announcement type...");
 
   await waitForSelectorOrDkkdError(
     page,
-    "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld",
+    ANNOUNCEMENT_TYPE_SELECTOR,
     "fillSearchForm:announcementType"
   );
 
   try {
     await page.selectOption(
-      "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld",
+      ANNOUNCEMENT_TYPE_SELECTOR,
       "NEW"
     );
   } catch (error: any) {
@@ -139,7 +226,7 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
 
   await waitForSelectorOrDkkdError(
     page,
-    "#ctl00_C_PUBLISH_DATEFilterFldFrom",
+    FROM_DATE_SELECTOR,
     "fillSearchForm:fromDate",
     10000
   );
@@ -154,12 +241,12 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
   });
 
   await page.fill(
-    "#ctl00_C_PUBLISH_DATEFilterFldFrom",
+    FROM_DATE_SELECTOR,
     fromDate || getStartDay()
   );
 
   await page.fill(
-    "#ctl00_C_PUBLISH_DATEFilterFldTo",
+    TO_DATE_SELECTOR,
     toDate || getEndDay()
   );
 
@@ -179,8 +266,10 @@ export async function fillSearchForm(page: Page, fromDate?: string, toDate?: str
   assertNotDkkdErrorPage(page, "fillSearchForm:end");
 }
 
-export async function submitSearch(page: Page, token: string) {
+export async function submitSearch(page: Page, token: string, fromDate?: string, toDate?: string) {
+  await ensureOnListingPage(page, "submitSearch");
   assertNotDkkdErrorPage(page, "submitSearch:start");
+  await assertSearchFormValues(page, fromDate, toDate);
   console.log("✅ Injecting captcha token...");
 
   await page.evaluate((captchaToken) => {

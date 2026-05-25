@@ -47,7 +47,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
       console.log(`🤖 Solving captcha... (attempt ${attempt}/${MAX_RETRIES})`);
       const token = await solveCaptcha(page.url());
 
-      await submitSearch(page, token);
+      await submitSearch(page, token, payload.fromDate, payload.toDate);
 
       // Kiểm tra bảng có trống không
       const empty = await isEmptyResultTable(page);

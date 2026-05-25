@@ -1,8 +1,7 @@
 export const SITE_URL =
   "https://bocaodientu.dkkd.gov.vn/egazette/Forms/Egazette/ANNOUNCEMENTSListingInsUpd.aspx";
 export const DKKD_ERROR_PATH = "/egazette/Main/Error.aspx";
-export const DKKD_PATH_REDIRECT_ACT =
-  "https://dangkyquamang.dkkd.gov.vn/auth/Public/LogOn.aspx";
+export const DKKD_LOGIN_PATH = "/auth/Public/LogOn.aspx";
 export const DKKD_AUTH_REDIRECT_CODE = "DKKD_AUTH_REDIRECT";
 export const DKKD_ERROR_CODE = "DKKD_SITE_ERROR";
 export const DKKD_ERROR_MESSAGE =

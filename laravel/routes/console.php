@@ -132,6 +132,12 @@ try {
     $schedules = ScrapeSchedule::where('is_active', true)->get();
     foreach ($schedules as $schedule) {
         Schedule::call(function () use ($schedule) {
+            $schedule->refresh();
+
+            if (! $schedule->is_active) {
+                return;
+            }
+
             // Không dispatch nếu đang có job khác chạy
             $alreadyRunning = ScrapeJob::whereIn('status', ['pending', 'processing'])->exists();
             if ($alreadyRunning) {
@@ -141,9 +147,15 @@ try {
                 return;
             }
 
-            $days     = $schedule->days_back ?? 1;
-            $fromDate = now()->subDays($days - 1)->format('d/m/Y');
-            $toDate   = now()->format('d/m/Y');
+            $fromDate = $schedule->from_date;
+            $toDate   = $schedule->to_date;
+
+            if (! $fromDate || ! $toDate) {
+                \Illuminate\Support\Facades\Log::warning(
+                    "Schedule #{$schedule->id}: skipped dispatch — missing fixed from/to date."
+                );
+                return;
+            }
 
             $job = ScrapeJob::create([
                 'chat_id'     => $schedule->chat_id,
@@ -164,6 +176,7 @@ try {
             ]);
 
             $schedule->update([
+                'is_active' => false,
                 'last_download_key' => $downloadKey,
                 'last_download_dir' => $downloadDir,
             ]);

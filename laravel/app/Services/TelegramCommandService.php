@@ -106,6 +106,7 @@ class TelegramCommandService
             'await_pages_run'      => $this->onRunPagesInput($chatId, $input),
             'await_target_run'     => $this->onRunTargetInput($chatId, $input),
             'await_time_schedule'  => $this->onScheduleTimeInput($chatId, $input),
+            'await_date_schedule'  => $this->onScheduleDateInput($chatId, $input),
             'await_pages_schedule' => $this->onSchedulePagesInput($chatId, $input),
             'await_target_schedule' => $this->onScheduleTargetInput($chatId, $input),
             default                => $this->conversation->clear($chatId),
@@ -334,18 +335,22 @@ class TelegramCommandService
             $targetChatId = $schedule->target_chat_id ?: $chatId;
             $icon         = $schedule->is_active ? '✅' : '❌';
             $status       = $schedule->is_active ? 'BẬT' : 'TẮT';
+            $dateRange    = ($schedule->from_date && $schedule->to_date)
+                ? "`{$schedule->from_date}` → `{$schedule->to_date}`"
+                : '_Chưa cấu hình_';
 
             $this->send($chatId, <<<TXT
-            🗓 *Lịch tự động hiện tại* — {$icon} {$status}
-            ⏰ Giờ chạy: `{$schedule->cron_expression}`
+            🗓 *Lịch chạy một lần hiện tại* — {$icon} {$status}
+            ⏰ Thời điểm chạy: `{$schedule->cron_expression}`
+            📅 Khoảng ngày cố định: {$dateRange}
             📄 Số trang tối đa: *{$limitLabel}*
             📤 Gửi file tới: {$this->formatChatTargetLabel($targetChatId)}
 
-            Mỗi ngày bot sẽ tự động cào dữ liệu DKKD của *ngày hôm trước* và gửi file PDF về tài khoản trên.
+            Lịch này chỉ chạy *một lần* theo cấu hình dưới đây. Sau khi chạy xong, bot sẽ tự tắt lịch và chờ bạn cài lại.
 
             ─────────────────────
             Bạn muốn làm gì?
-            • Nhập lại *thời điểm muốn job chạy* mỗi ngày (VD: `07:30`) để cài đặt lại lịch
+            • Nhập lại *thời điểm muốn job chạy* (VD: `07:30`) để cài đặt lại lịch
             • Gõ /cancel để *xoá lịch hiện tại*
             TXT);
 
@@ -358,14 +363,14 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         🗓 *Cài đặt lịch chạy tự động*
 
-        Bot sẽ tự động cào dữ liệu DKKD mỗi ngày và gửi file PDF về tài khoản bạn chỉ định — không cần thao tác thủ công.
+        Bot sẽ tạo *một lịch chạy một lần* cho job cào dữ liệu DKKD và gửi file PDF về tài khoản bạn chỉ định.
 
         ─────────────────────
-        ⏰ *Bước 1/3 — Thời Điểm Chạy Job*
-        Bạn muốn job tự động này chạy vào thời điểm nào mỗi ngày?
+        ⏰ *Bước 1/4 — Thời Điểm Chạy Job*
+        Bạn muốn job này chạy vào thời điểm nào?
 
         Nhập theo định dạng `HH:mm`
-        Ví dụ: `07:00` → chạy lúc 7h sáng, lấy dữ liệu của ngày hôm trước
+        Ví dụ: `07:00`
 
         _Hoặc /cancel để huỷ thiết lập._
         TXT);
@@ -404,13 +409,51 @@ class TelegramCommandService
 
         $cron = "{$minute} {$hour} * * *";
 
-        $this->conversation->transition($chatId, 'await_pages_schedule', ['cron' => $cron, 'time' => trim($input)]);
+        $this->conversation->transition($chatId, 'await_date_schedule', ['cron' => $cron, 'time' => trim($input)]);
 
         $this->send($chatId, <<<TXT
-        ✅ Thời điểm chạy job: *{$input}* mỗi ngày.
+        ✅ Thời điểm chạy job: *{$input}*.
 
         ─────────────────────
-        📄 *Bước 2/3 — Số trang*
+        📅 *Bước 2/4 — Khoảng Ngày Cố Định*
+        Bạn muốn form lấy dữ liệu trong khoảng ngày nào?
+
+        Nhập theo định dạng: `dd/mm/yyyy - dd/mm/yyyy`
+        Ví dụ: `01/05/2026 - 15/05/2026`
+
+        _Hoặc /cancel để huỷ._
+        TXT);
+    }
+
+    /** /schedule — Nhận khoảng ngày → hỏi số trang */
+    protected function onScheduleDateInput(string $chatId, string $input): void
+    {
+        $parsed = $this->parseDateRange($input);
+
+        if (! $parsed) {
+            $this->send($chatId, <<<TXT
+            ❌ Định dạng không hợp lệ.
+            Vui lòng nhập theo dạng: `dd/mm/yyyy - dd/mm/yyyy`
+            Ví dụ: `01/05/2026 - 15/05/2026`
+            TXT);
+            return;
+        }
+
+        [$fromDate, $toDate] = $parsed;
+        $session = $this->conversation->get($chatId);
+
+        $this->conversation->transition($chatId, 'await_pages_schedule', [
+            'cron' => $session['cron'],
+            'time' => $session['time'],
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+        ]);
+
+        $this->send($chatId, <<<TXT
+        ✅ Khoảng ngày cố định: `{$fromDate}` → `{$toDate}`
+
+        ─────────────────────
+        📄 *Bước 3/4 — Số trang*
         Mỗi lần chạy, bot sẽ lấy tối đa bao nhiêu trang kết quả từ DKKD?
 
         Nhập số trang (VD: `3`, `10`) hoặc `tất cả` để lấy toàn bộ.
@@ -429,6 +472,8 @@ class TelegramCommandService
         $this->conversation->transition($chatId, 'await_target_schedule', [
             'cron' => $session['cron'],
             'time' => $session['time'],
+            'from_date' => $session['from_date'],
+            'to_date' => $session['to_date'],
             'max_records' => $limit,
             'limit_label' => $limitLabel,
         ]);
@@ -437,7 +482,7 @@ class TelegramCommandService
         ✅ Số trang tối đa: *{$limitLabel}*.
 
         ─────────────────────
-        📤 *Bước 3/3 — Nơi nhận file*
+        📤 *Bước 4/4 — Nơi nhận file*
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
         Nhập một trong các giá trị sau:
@@ -470,6 +515,8 @@ class TelegramCommandService
             ['chat_id' => $chatId],
             [
                 'target_chat_id'  => $target['chat_id'],
+                'from_date'       => $session['from_date'],
+                'to_date'         => $session['to_date'],
                 'cron_expression' => $session['cron'],
                 'days_back'       => 1,
                 'max_records'     => $session['max_records'],
@@ -482,13 +529,13 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         ✅ *Lịch tự động đã được lưu!*
 
-        ⏰ Giờ chạy: *{$session['time']}* mỗi ngày
-        📅 Dữ liệu: ngày hôm trước tính từ lúc chạy
+        ⏰ Thời điểm chạy: *{$session['time']}*
+        📅 Khoảng ngày cố định: `{$session['from_date']}` → `{$session['to_date']}`
         📄 Số trang tối đa: *{$session['limit_label']}*
         📤 Gửi file tới: *{$target['label']}*
         {$targetWarning}
 
-        Bot sẽ tự động chạy theo lịch trên mà không cần thao tác thêm.
+        Bot sẽ chạy *một lần* theo lịch trên, sau đó tự tắt và chờ bạn cài lại.
         Dùng /status để kiểm tra, /schedule để chỉnh sửa.
         TXT);
     }
@@ -505,7 +552,10 @@ class TelegramCommandService
             $icon        = $schedule->is_active ? '✅' : '❌';
             $status      = $schedule->is_active ? 'BẬT' : 'TẮT';
             $targetChatId = $schedule->target_chat_id ?: $chatId;
-            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · {$limitLabel} · gửi {$this->formatChatTargetLabel($targetChatId)}";
+            $rangeLabel = ($schedule->from_date && $schedule->to_date)
+                ? "{$schedule->from_date}→{$schedule->to_date}"
+                : 'chưa có range';
+            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · `{$rangeLabel}` · {$limitLabel} · gửi {$this->formatChatTargetLabel($targetChatId)}";
         } else {
             $scheduleText = "_Chưa cấu hình — dùng /schedule_";
         }
@@ -571,6 +621,7 @@ class TelegramCommandService
     {
         return in_array($state, [
             'await_time_schedule',
+            'await_date_schedule',
             'await_pages_schedule',
             'await_target_schedule',
         ], true);
