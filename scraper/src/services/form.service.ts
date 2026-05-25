@@ -322,7 +322,20 @@ export async function submitSearch(page: Page, token: string, fromDate?: string,
     .locator("#ctl00_C_CtlList")
     .innerHTML();
 
-  await page.click("#ctl00_C_BtnFilter");
+  try {
+    await page.click("#ctl00_C_BtnFilter", {
+      timeout: 10000,
+      noWaitAfter: true,
+    });
+  } catch (error: any) {
+    await captureFormErrorScreenshot(page, "submitSearch_click_filter");
+
+    if (isDkkdErrorPageUrl(page.url())) {
+      throw makeDkkdSiteError("submitSearch:clickFilter");
+    }
+
+    throw error;
+  }
 
   await page.waitForFunction(
     (previous) => {
