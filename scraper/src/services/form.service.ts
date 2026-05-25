@@ -337,19 +337,48 @@ export async function submitSearch(page: Page, token: string, fromDate?: string,
     throw error;
   }
 
-  await page.waitForFunction(
-    (previous) => {
-      const current = document.querySelector(
-        "#ctl00_C_CtlList"
-      )?.innerHTML;
+  try {
+    await page.waitForFunction(
+      (previous) => {
+        const current = document.querySelector(
+          "#ctl00_C_CtlList"
+        )?.innerHTML;
 
-      return current && current !== previous;
-    },
-    oldHtml,
-    {
-      timeout: 30000,
+        return current && current !== previous;
+      },
+      oldHtml,
+      {
+        timeout: 30000,
+      }
+    );
+  } catch (error: any) {
+    await captureFormErrorScreenshot(page, "submitSearch_wait_results");
+
+    const diagnostic = await page.evaluate(() => {
+      const table = document.querySelector("#ctl00_C_CtlList");
+      const captcha = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null;
+      const validationSummary = document.querySelector(".validation-summary-errors, #ctl00_C_ValidationSummary1");
+
+      return {
+        url: window.location.href,
+        title: document.title,
+        tableText: table?.textContent?.replace(/\s+/g, " ").trim().slice(0, 300) ?? "",
+        tableHtmlLength: table?.innerHTML?.length ?? 0,
+        captchaLength: captcha?.value?.length ?? 0,
+        validationText: validationSummary?.textContent?.replace(/\s+/g, " ").trim().slice(0, 300) ?? "",
+      };
+    }).catch((diagnosticError: any) => ({
+      diagnosticError: diagnosticError.message,
+    }));
+
+    console.warn("⚠️ Submit did not update result table", diagnostic);
+
+    if (isDkkdErrorPageUrl(page.url())) {
+      throw makeDkkdSiteError("submitSearch:waitResults");
     }
-  );
+
+    throw error;
+  }
 
   console.log("✅ Result table updated");
   assertNotDkkdErrorPage(page, "submitSearch:end");
