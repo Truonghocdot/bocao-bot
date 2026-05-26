@@ -68,7 +68,9 @@ async function downloadSinglePdfByClick(
 ): Promise<string> {
   const targetPath = path.join(downloadDir, row.filename);
   const timeoutMs = getDownloadTimeoutMs();
-  const button = page.locator(PDF_BTN).nth(row.rowIndex);
+  const button = row.btnName
+    ? page.locator(`input[name="${row.btnName}"]`)
+    : page.locator(PDF_BTN).nth(row.rowIndex);
 
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: timeoutMs }),

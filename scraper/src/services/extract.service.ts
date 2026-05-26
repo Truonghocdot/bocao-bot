@@ -7,6 +7,7 @@ export interface RowDetail {
   globalIndex: number;
   pageIndex: number;
   rowIndex: number;
+  btnName?: string;
   companyName: string;
   filename: string;
   pdfUrl?: string;
@@ -143,6 +144,7 @@ export async function extractCurrentPageRows(
       globalIndex: startIndex + rows.length,
       pageIndex: currentPage,
       rowIndex: rows.length,
+      btnName: btnName || undefined,
       companyName: companyName.trim(),
       filename: `${String(startIndex + rows.length + 1).padStart(4, "0")}_${safeName}.pdf`,
       pdfUrl,
