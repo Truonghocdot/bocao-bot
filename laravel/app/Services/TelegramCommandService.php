@@ -303,8 +303,6 @@ class TelegramCommandService
             'download_key' => $this->makeDownloadKey($job),
         ]);
 
-        RunScraperJob::dispatch($job);
-
         $timeEstimate = $this->scraperService->estimateRunTimeForDateRange(
             $session['from_date'],
             $session['to_date'],
@@ -313,6 +311,8 @@ class TelegramCommandService
         $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
         $targetWarning = $this->formatTargetWarning($target);
+
+        RunScraperJob::dispatch($job);
 
         $this->send($chatId, <<<TXT
         🚀 *Đã đưa vào hàng đợi!*
