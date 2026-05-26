@@ -14,17 +14,17 @@ use Telegram\Bot\FileUpload\InputFile;
 use Telegram\Bot\Laravel\Facades\Telegram;
 
 /**
- * Recovery job: scan download_dir của một ScrapeJob đã failed/timeout
- * và gửi toàn bộ file PDF đã tải được về Telegram.
- *
- * Trigger tự động qua RunScraperJob::failed() hoặc thủ công qua /status.
+ * Scan download_dir of a ScrapeJob and deliver all downloaded PDFs to Telegram.
+ * Used both for the normal post-scrape delivery flow and failure recovery.
  */
 class DeliverPendingFilesJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    // Gửi 1730 file × 0.25s delay + overhead Telegram = ~40 phút
-    public $timeout = 3600;
+    // Large Telegram batches can hit rate limits; keep this separate from scrape timeout.
+    public $timeout = 14400;
+
+    public $tries = 1;
 
     protected ScrapeJob $jobRecord;
 
@@ -37,10 +37,16 @@ class DeliverPendingFilesJob implements ShouldQueue
     {
         $this->jobRecord->refresh();
 
+        if ($this->jobRecord->delivered_at !== null) {
+            Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: already delivered, skipping.");
+            return;
+        }
+
         $downloadDir = $this->jobRecord->download_dir;
 
         if (! $downloadDir || ! is_dir($downloadDir)) {
             Log::warning("DeliverPendingFilesJob #{$this->jobRecord->id}: download_dir không tồn tại — {$downloadDir}");
+            $this->markDeliveryUnavailable('download_dir không tồn tại');
             return;
         }
 
@@ -49,22 +55,38 @@ class DeliverPendingFilesJob implements ShouldQueue
 
         if (empty($files)) {
             Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: không có file PDF nào để gửi.");
-            $this->notifySource("ℹ️ Không tìm thấy file PDF nào đã tải để gửi lại.");
+            $this->markDeliveryUnavailable('không có file PDF để gửi');
+            $this->notifySource("ℹ️ Không tìm thấy file PDF nào đã tải để gửi.");
             return;
         }
 
-        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: gửi {$this->jobRecord->id} file từ {$downloadDir}");
+        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery started.", [
+            'files' => count($files),
+            'download_dir' => $downloadDir,
+            'status' => $this->jobRecord->status,
+        ]);
 
         $this->notifySource("📦 Tìm thấy *" . count($files) . "* file PDF đã tải. Đang gửi...");
 
         $sent = $this->deliverFiles($files, $deliveryService);
 
-        $this->jobRecord->update([
+        $updates = [
             'downloaded_count' => count($files),
             'delivered_at'     => now(),
+        ];
+
+        if (! in_array($this->jobRecord->status, ['failed', 'stopped'], true)) {
+            $updates['status'] = 'completed';
+        }
+
+        $this->jobRecord->update($updates);
+
+        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery completed.", [
+            'sent' => $sent,
+            'files' => count($files),
         ]);
 
-        $this->notifySource("✅ Đã gửi lại *{$sent}/" . count($files) . "* file PDF.");
+        $this->notifySource("✅ Đã gửi *{$sent}/" . count($files) . "* file PDF.");
     }
 
     protected function deliverFiles(array $files, TelegramDeliveryService $deliveryService): int
@@ -125,5 +147,21 @@ class DeliverPendingFilesJob implements ShouldQueue
         } catch (\Throwable $e) {
             Log::warning("DeliverPendingFilesJob: notify failed — " . $e->getMessage());
         }
+    }
+
+    protected function markDeliveryUnavailable(string $message): void
+    {
+        $updates = [
+            'downloaded_count' => 0,
+            'delivered_at' => now(),
+        ];
+
+        if (! in_array($this->jobRecord->status, ['failed', 'stopped'], true)) {
+            $updates['status'] = 'completed';
+        }
+
+        $this->jobRecord->update($updates);
+
+        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: {$message}.");
     }
 }

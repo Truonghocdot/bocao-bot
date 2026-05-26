@@ -5,7 +5,6 @@ namespace App\Jobs;
 use App\Jobs\DeliverPendingFilesJob;
 use App\Models\ScrapeJob;
 use App\Services\ScraperService;
-use App\Services\TelegramDeliveryService;
 use App\Services\TelegramLogService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -13,7 +12,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Telegram\Bot\FileUpload\InputFile;
 use Telegram\Bot\Laravel\Facades\Telegram;
 
 class RunScraperJob implements ShouldQueue
@@ -22,13 +20,12 @@ class RunScraperJob implements ShouldQueue
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
     protected const DKKD_SITE_ERROR_CODE = 'DKKD_SITE_ERROR';
     protected const DKKD_AUTH_REDIRECT_CODE = 'DKKD_AUTH_REDIRECT';
-    protected bool $targetChatUnavailable = false;
 
     /**
-     * Click-based scraping and per-file Telegram delivery can take a while.
-     * Worst case: ~1730 files ≈ 50 phút scrape + ~40 phút gửi Telegram = ~2 tiếng.
+     * Scrape job only waits for the Express scraper. Telegram delivery runs
+     * in DeliverPendingFilesJob so scraper timeout is not mixed with send time.
      */
-    public $timeout = 7200; // 2 tiếng
+    public $timeout = 14400; // 4 tiếng
 
     /**
      * Không retry — scraper không idempotent, retry sẽ chạy lại từ đầu
@@ -43,10 +40,14 @@ class RunScraperJob implements ShouldQueue
         $this->jobRecord = $jobRecord;
     }
 
+    public function retryUntil(): \DateTime
+    {
+        return now()->addHours(5);
+    }
+
     public function handle(
         ScraperService $scraperService,
-        TelegramLogService $logService,
-        TelegramDeliveryService $deliveryService
+        TelegramLogService $logService
     ): void
     {
         // Kiểm tra nếu user đã gửi /stop trước khi queue xử lý
@@ -88,45 +89,52 @@ class RunScraperJob implements ShouldQueue
             $wasStopped = $this->jobRecord->status === 'stopped';
 
             $downloaded = $result['downloaded'] ?? 0;
-            $files      = $result['files'] ?? [];
             $downloadDir = $result['downloadDir'] ?? $this->jobRecord->download_dir;
 
             $this->jobRecord->update([
+                'status' => $wasStopped ? 'stopped' : 'delivering',
                 'downloaded_count' => $downloaded,
                 'download_dir'      => $downloadDir,
                 'zip_path'         => null,
+                'error_message'    => null,
             ]);
 
-            $sent = $this->deliverFiles($files, $wasStopped, $deliveryService);
-
-            $this->jobRecord->update([
-                'status' => $wasStopped ? 'stopped' : 'completed',
-                'delivered_at' => now(),
+            Log::info("RunScraperJob #{$this->jobRecord->id}: scrape completed, dispatching delivery.", [
+                'downloaded' => $downloaded,
+                'download_dir' => $downloadDir,
+                'stopped' => $wasStopped,
             ]);
 
-            $this->notify("✅ Đã gửi {$sent}/{$downloaded} file PDF.");
-
+            DeliverPendingFilesJob::dispatch($this->jobRecord);
         } catch (\Throwable $e) {
             $logService->logException($e, null, "RunScraperJob #{$this->jobRecord->id}");
 
             $partialFiles = $this->collectDownloadedFiles();
-            $sent = count($partialFiles) > 0 ? $this->deliverFiles($partialFiles, false, $deliveryService) : 0;
+            $partialCount = count($partialFiles);
 
             $this->jobRecord->update([
                 'status'           => 'failed',
-                'downloaded_count' => count($partialFiles),
+                'downloaded_count' => $partialCount,
                 'error_message'    => $this->truncateForDatabase($e->getMessage()),
-                'delivered_at'     => $sent > 0 ? now() : null,
             ]);
 
-            $this->notify($sent > 0
-                ? "⚠️ Có lỗi xảy ra khi lấy dữ liệu. Bot đã gửi {$sent} file PDF tải được trước khi lỗi."
+            if ($partialCount > 0) {
+                Log::info("RunScraperJob #{$this->jobRecord->id}: scraper failed but found partial files, dispatching delivery.", [
+                    'partial_files' => $partialCount,
+                    'download_dir' => $this->jobRecord->download_dir,
+                ]);
+
+                DeliverPendingFilesJob::dispatch($this->jobRecord);
+            }
+
+            $this->notify($partialCount > 0
+                ? "⚠️ Có lỗi xảy ra khi lấy dữ liệu. Bot tìm thấy {$partialCount} file PDF đã tải và sẽ gửi các file này."
                 : $this->buildFailureMessage($e)
             );
 
-            // Re-throw để failed() hook biết job thực sự fail
-            // (nhưng chỉ khi không có file nào được gửi — nếu đã gửi thì không cần recovery)
-            if ($sent === 0) {
+            // Re-throw only when there are no files to recover; partial files
+            // are handled by DeliverPendingFilesJob above.
+            if ($partialCount === 0) {
                 throw $e;
             }
         }
@@ -175,80 +183,6 @@ class RunScraperJob implements ShouldQueue
         return substr($message, 0, self::MAX_DB_ERROR_MESSAGE_LENGTH) . '...';
     }
 
-    protected function targetChatId(): string
-    {
-        return $this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id;
-    }
-
-    /**
-     * Gửi từng file PDF về Telegram.
-     */
-    protected function deliverFiles(array $files, bool $wasStopped, TelegramDeliveryService $deliveryService): int
-    {
-        $sent = 0;
-        $targetChatId = $this->targetChatId();
-        $fallbackChatId = $this->jobRecord->chat_id;
-        $prefix = $wasStopped ? "Đã dừng theo yêu cầu." : "PDF DKKD";
-
-        foreach ($files as $file) {
-            if (! is_string($file) || ! file_exists($file)) {
-                continue;
-            }
-
-            try {
-                $deliveryService->sendDocumentToTarget([
-                    'chat_id'  => $targetChatId,
-                    'document' => InputFile::create($file),
-                    'caption'  => "{$prefix}\n" . basename($file),
-                ]);
-                $sent++;
-                $deliveryService->pauseBetweenDocumentSends();
-            } catch (\Throwable $e) {
-                if ($this->shouldFallbackToSourceChat($e, $targetChatId, $fallbackChatId)) {
-                    try {
-                        $deliveryService->sendDocumentToSource([
-                            'chat_id'  => $fallbackChatId,
-                            'document' => InputFile::create($file),
-                            'caption'  => "{$prefix}\n" . basename($file),
-                        ]);
-                        $sent++;
-                        $deliveryService->pauseBetweenDocumentSends();
-                        continue;
-                    } catch (\Throwable $fallbackError) {
-                        Log::warning("RunScraperJob: Failed fallback send PDF {$file} — " . $fallbackError->getMessage());
-                    }
-                }
-
-                Log::warning("RunScraperJob: Failed to send PDF {$file} — " . $e->getMessage());
-            }
-        }
-
-        return $sent;
-    }
-
-    protected function shouldFallbackToSourceChat(\Throwable $e, string $targetChatId, string $fallbackChatId): bool
-    {
-        if ($targetChatId === $fallbackChatId) {
-            return false;
-        }
-
-        $message = mb_strtolower($e->getMessage());
-        $isTargetUnavailable = str_contains($message, 'chat not found')
-            || str_contains($message, 'bot was blocked by the user')
-            || str_contains($message, 'user is deactivated');
-
-        if (! $isTargetUnavailable) {
-            return false;
-        }
-
-        if (! $this->targetChatUnavailable) {
-            Log::warning("RunScraperJob: Target chat '{$targetChatId}' unavailable, fallback to source chat '{$fallbackChatId}'.");
-            $this->targetChatUnavailable = true;
-        }
-
-        return true;
-    }
-
     protected function collectDownloadedFiles(): array
     {
         $downloadDir = $this->jobRecord->download_dir;
@@ -274,23 +208,25 @@ class RunScraperJob implements ShouldQueue
 
         $this->jobRecord->refresh();
 
-        // Đã gửi file trong catch block rồi → không cần recovery
+        // Delivery already happened or was queued by handle().
         if ($this->jobRecord->delivered_at !== null) {
             return;
         }
 
-        // Có file trên disk nhưng chưa gửi → dispatch recovery
-        if (
-            $this->jobRecord->download_dir
-            && is_dir($this->jobRecord->download_dir)
-            && ! in_array($this->jobRecord->status, ['completed', 'stopped'])
-        ) {
+        // Có file trên disk nhưng chưa gửi → dispatch recovery.
+        if ($this->jobRecord->download_dir && is_dir($this->jobRecord->download_dir)) {
             $files = glob(rtrim($this->jobRecord->download_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.pdf') ?: [];
 
             if (count($files) > 0) {
-                $this->jobRecord->update(['status' => 'failed']);
+                $status = $this->jobRecord->status === 'stopped' ? 'stopped' : 'failed';
+
+                $this->jobRecord->update([
+                    'status' => $status,
+                    'downloaded_count' => count($files),
+                    'error_message' => $this->truncateForDatabase($exception->getMessage()),
+                ]);
                 DeliverPendingFilesJob::dispatch($this->jobRecord);
-                Log::info("RunScraperJob #{$this->jobRecord->id}: dispatched DeliverPendingFilesJob — {$this->jobRecord->id} files found.");
+                Log::info("RunScraperJob #{$this->jobRecord->id}: dispatched DeliverPendingFilesJob — " . count($files) . " files found.");
                 return;
             }
         }

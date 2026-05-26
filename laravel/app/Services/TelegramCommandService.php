@@ -183,7 +183,7 @@ class TelegramCommandService
     {
         // Check global — scraper chỉ xử lý được 1 job tại một thời điểm
         $myJob = ScrapeJob::where('chat_id', $chatId)
-            ->whereIn('status', ['pending', 'processing'])
+            ->whereIn('status', ['pending', 'processing', 'delivering'])
             ->exists();
 
         if ($myJob) {
@@ -192,7 +192,7 @@ class TelegramCommandService
         }
 
         $otherJob = ScrapeJob::where('chat_id', '!=', $chatId)
-            ->whereIn('status', ['pending', 'processing'])
+            ->whereIn('status', ['pending', 'processing', 'delivering'])
             ->exists();
 
         if ($otherJob) {
@@ -576,6 +576,7 @@ class TelegramCommandService
         $emoji = [
             'pending'    => '🕐',
             'processing' => '⚙️',
+            'delivering' => '📤',
             'completed'  => '✅',
             'failed'     => '❌',
             'stopped'    => '🛑',
@@ -587,7 +588,7 @@ class TelegramCommandService
                 $icon  = $emoji[$job->status] ?? '❓';
                 $time  = $job->created_at->format('d/m H:i');
                 $range = $job->from_date ? " `{$job->from_date}→{$job->to_date}`" : '';
-                $extra = $job->status === 'completed' ? " · {$job->downloaded_count} bản" : '';
+                $extra = in_array($job->status, ['delivering', 'completed'], true) ? " · {$job->downloaded_count} bản" : '';
                 return "{$icon} {$time}{$range}{$extra}";
             })->implode("\n");
 
@@ -607,7 +608,7 @@ class TelegramCommandService
     protected function handleStop(string $chatId): void
     {
         $activeJob = ScrapeJob::where('chat_id', $chatId)
-            ->whereIn('status', ['pending', 'processing'])
+            ->whereIn('status', ['pending', 'processing', 'delivering'])
             ->latest()->first();
 
         if (!$activeJob) {
