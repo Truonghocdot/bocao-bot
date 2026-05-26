@@ -1,44 +1,23 @@
-import axios from "axios";
+import { Page } from "@playwright/test";
 import fs from "fs";
-import https from "https";
 import path from "path";
-import pLimit from "p-limit";
-import { RowDetail } from "../services/extract.service.js";
+import { RowDetail, goToPage } from "../services/extract.service.js";
 
-const DEFAULT_DOWNLOAD_CONCURRENCY = 3;
-const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60000;
-const DEFAULT_DOWNLOAD_RETRIES = 3;
-const DEFAULT_RETRY_BASE_DELAY_MS = 2000;
-const DEFAULT_WORKER_DELAY_MS = 400;
-const DEFAULT_TLS_REJECT_UNAUTHORIZED = false;
-
-function getDownloadConcurrency(): number {
-  return Math.max(1, Number(process.env.DOWNLOAD_CONCURRENCY || DEFAULT_DOWNLOAD_CONCURRENCY));
-}
+const PDF_BTN = 'input[id*="LnkGetPDFActive"]';
+const DEFAULT_CLICK_DOWNLOAD_TIMEOUT_MS = 60000;
+const DEFAULT_CLICK_DOWNLOAD_RETRIES = 2;
+const DEFAULT_CLICK_DOWNLOAD_DELAY_MS = 1200;
 
 function getDownloadTimeoutMs(): number {
-  return Math.max(10000, Number(process.env.DOWNLOAD_TIMEOUT_MS || DEFAULT_DOWNLOAD_TIMEOUT_MS));
+  return Math.max(10000, Number(process.env.DOWNLOAD_TIMEOUT_MS || DEFAULT_CLICK_DOWNLOAD_TIMEOUT_MS));
 }
 
 function getDownloadRetries(): number {
-  return Math.max(1, Number(process.env.DOWNLOAD_RETRIES || DEFAULT_DOWNLOAD_RETRIES));
+  return Math.max(1, Number(process.env.DOWNLOAD_RETRIES || DEFAULT_CLICK_DOWNLOAD_RETRIES));
 }
 
-function getWorkerDelayMs(): number {
-  return Math.max(0, Number(process.env.DOWNLOAD_WORKER_DELAY_MS || DEFAULT_WORKER_DELAY_MS));
-}
-
-function getRetryBaseDelayMs(): number {
-  return Math.max(250, Number(process.env.DOWNLOAD_RETRY_BASE_DELAY_MS || DEFAULT_RETRY_BASE_DELAY_MS));
-}
-
-function shouldRejectUnauthorized(): boolean {
-  const defaultValue = DEFAULT_TLS_REJECT_UNAUTHORIZED ? "1" : "0";
-  const raw = String(process.env.DOWNLOAD_TLS_REJECT_UNAUTHORIZED ?? defaultValue)
-    .trim()
-    .toLowerCase();
-
-  return !["0", "false", "no", "off"].includes(raw);
+function getDownloadDelayMs(): number {
+  return Math.max(0, Number(process.env.DOWNLOAD_WORKER_DELAY_MS || DEFAULT_CLICK_DOWNLOAD_DELAY_MS));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -46,122 +25,124 @@ function sleep(ms: number): Promise<void> {
 }
 
 function jitter(ms: number): number {
-  return ms + Math.floor(Math.random() * 300);
+  return ms + Math.floor(Math.random() * 800);
 }
 
-function isRetryableError(error: any): boolean {
-  const status = error?.response?.status;
-  const code = String(error?.code || "");
-  const message = String(error?.message || "").toLowerCase();
-
-  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
-    return true;
+async function captureDownloadErrorScreenshot(page: Page, row: RowDetail, step: string): Promise<void> {
+  if (page.isClosed()) {
+    return;
   }
 
-  return (
-    code === "ECONNRESET" ||
-    code === "ETIMEDOUT" ||
-    code === "ECONNABORTED" ||
-    message.includes("timeout") ||
-    message.includes("socket hang up")
+  const storageRoot = path.resolve(process.cwd(), "..", "storage");
+  const errDir = path.join(storageRoot, "errors");
+  fs.mkdirSync(errDir, { recursive: true });
+
+  const screenshotPath = path.join(
+    errDir,
+    `download-click-${step.replace(/[^a-zA-Z0-9_-]/g, "_")}-${String(row.globalIndex + 1).padStart(4, "0")}-${Date.now()}.png`
   );
-}
 
-function ensureDownloadRequest(row: RowDetail): void {
-  if (!row.pdfUrl || !row.postData || !row.cookieHeader || !row.userAgent) {
-    throw new Error(`Thiếu dữ liệu tải PDF cho file ${row.filename}`);
+  try {
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+    });
+    console.warn(`📸 Đã lưu screenshot lỗi download [${step}] file #${row.globalIndex + 1}: ${screenshotPath}`);
+  } catch (error: any) {
+    console.warn(`⚠️ Không thể chụp screenshot lỗi download [${step}] file #${row.globalIndex + 1}: ${error.message}`);
   }
 }
 
-async function downloadSinglePdf(row: RowDetail, downloadDir: string): Promise<string> {
-  ensureDownloadRequest(row);
+async function waitBetweenDownloads(): Promise<void> {
+  const delayMs = getDownloadDelayMs();
 
-  const outputPath = path.join(downloadDir, row.filename);
-  const response = await axios.post(row.pdfUrl!, new URLSearchParams(row.postData!), {
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: row.cookieHeader!,
-      "User-Agent": row.userAgent!,
-      Referer: row.pdfUrl!,
-      Origin: new URL(row.pdfUrl!).origin,
-    },
-    responseType: "stream",
-    timeout: getDownloadTimeoutMs(),
-    maxRedirects: 5,
-    httpsAgent: new https.Agent({
-      rejectUnauthorized: shouldRejectUnauthorized(),
+  if (delayMs > 0) {
+    await sleep(jitter(delayMs));
+  }
+}
+
+async function downloadSinglePdfByClick(
+  page: Page,
+  row: RowDetail,
+  downloadDir: string
+): Promise<string> {
+  const targetPath = path.join(downloadDir, row.filename);
+  const timeoutMs = getDownloadTimeoutMs();
+  const button = page.locator(PDF_BTN).nth(row.rowIndex);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download", { timeout: timeoutMs }),
+    button.click({
+      timeout: 10000,
+      noWaitAfter: true,
     }),
-    validateStatus: (status) => status >= 200 && status < 400,
-  });
+  ]);
 
-  const writer = fs.createWriteStream(outputPath);
+  await download.saveAs(targetPath);
 
-  await new Promise<void>((resolve, reject) => {
-    response.data.pipe(writer);
-    response.data.on("error", reject);
-    writer.on("error", reject);
-    writer.on("finish", resolve);
-  });
-
-  const stats = fs.statSync(outputPath);
+  const stats = fs.statSync(targetPath);
   if (stats.size === 0) {
-    fs.unlinkSync(outputPath);
+    fs.unlinkSync(targetPath);
     throw new Error(`Downloaded empty file: ${row.filename}`);
   }
 
-  return outputPath;
+  return targetPath;
 }
 
-async function downloadWithRetry(row: RowDetail, downloadDir: string): Promise<string | null> {
-  const maxAttempts = getDownloadRetries();
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const outputPath = await downloadSinglePdf(row, downloadDir);
-      console.log(`⬇️ Downloaded: ${row.filename}`);
-      return outputPath;
-    } catch (error: any) {
-      const retryable = isRetryableError(error);
-      const isLastAttempt = attempt === maxAttempts;
-
-      if (!retryable || isLastAttempt) {
-        console.warn(
-          `⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}) sau ${attempt} lần thử: ${error.message}`
-        );
-        return null;
-      }
-
-      const delayMs = jitter(getRetryBaseDelayMs() * attempt);
-      console.warn(
-        `⚠️ Tải lỗi file #${row.globalIndex + 1} (${row.filename}), thử lại ${attempt}/${maxAttempts} sau ${delayMs}ms: ${error.message}`
-      );
-      await sleep(delayMs);
-    }
-  }
-
-  return null;
-}
-
-export async function downloadAllPdfsParallel(
+export async function downloadAllPdfsByClick(
+  page: Page,
   rows: RowDetail[],
   downloadDir: string
 ): Promise<string[]> {
-  const concurrency = getDownloadConcurrency();
-  const workerDelayMs = getWorkerDelayMs();
-  const limit = pLimit(concurrency);
+  console.log(`🚀 Bắt đầu tải ${rows.length} PDF bằng click browser...`);
 
-  console.log(`🚀 Bắt đầu tải ${rows.length} PDF bằng ${concurrency} worker...`);
+  const downloadedFiles: string[] = [];
+  const maxAttempts = getDownloadRetries();
+  let currentPage = 1;
 
-  const tasks = rows.map((row) =>
-    limit(async () => {
-      if (workerDelayMs > 0) {
-        await sleep(jitter(workerDelayMs));
+  for (const row of rows) {
+    if (page.isClosed()) {
+      console.warn(`⚠️ Browser đã đóng tại file #${row.globalIndex + 1}, dừng tải.`);
+      break;
+    }
+
+    if (row.pageIndex !== currentPage) {
+      await goToPage(page, row.pageIndex);
+      currentPage = row.pageIndex;
+    }
+
+    await waitBetweenDownloads();
+
+    let successPath: string | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        successPath = await downloadSinglePdfByClick(page, row, downloadDir);
+        console.log(`⬇️ Downloaded: ${row.filename}`);
+        break;
+      } catch (error: any) {
+        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`);
+
+        const isLastAttempt = attempt === maxAttempts;
+        if (isLastAttempt) {
+          console.warn(
+            `⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}) sau ${attempt} lần thử: ${error.message}`
+          );
+          break;
+        }
+
+        console.warn(
+          `⚠️ Tải lỗi file #${row.globalIndex + 1} (${row.filename}), thử lại ${attempt}/${maxAttempts}: ${error.message}`
+        );
+
+        await waitBetweenDownloads();
       }
+    }
 
-      return downloadWithRetry(row, downloadDir);
-    })
-  );
+    if (successPath) {
+      downloadedFiles.push(successPath);
+    }
+  }
 
-  const results = await Promise.all(tasks);
-  return results.filter((file): file is string => Boolean(file));
+  return downloadedFiles;
 }

@@ -1,8 +1,8 @@
 import { createBrowser, createPage } from "../browser/index.js";
 import { openSite, fillSearchForm, submitSearch } from "../services/form.service.js";
-import { collectAllRows, RowDetail, isEmptyResultTable } from "../services/extract.service.js";
+import { collectAllRows, getTotalPages, getTotalRecords, RowDetail, isEmptyResultTable } from "../services/extract.service.js";
 import { solveCaptcha } from "../captcha/index.js";
-import { downloadAllPdfsParallel } from "../download/index.js";
+import { downloadAllPdfsByClick } from "../download/index.js";
 import { generateDownloadDir } from "../utils/date.js";
 import { isDebug } from "../utils/contants.js";
 import fs from "fs";
@@ -14,6 +14,7 @@ export interface ScrapePayload {
   limit?: number;      // tối đa bao nhiêu TRANG — undefined = lấy tất cả
   dryRun?: boolean;    // true = chỉ xem danh sách, không tải PDF
   downloadKey?: string; // thư mục downloads/<downloadKey> do Laravel cấp
+  estimateOnly?: boolean; // true = chỉ đọc tổng số trang / số bản ghi để estimate timeout
 }
 
 export interface ScrapeResult {
@@ -22,6 +23,8 @@ export interface ScrapeResult {
   files?: string[];
   dryRun?: boolean;
   preview?: RowDetail[];
+  totalPages?: number;
+  totalRecords?: number;
 }
 
 export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> {
@@ -67,6 +70,18 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
         return { downloaded: 0, downloadDir: absoluteDownloadDir };
       }
 
+      if (payload.estimateOnly) {
+        const totalRecords = await getTotalRecords(page);
+        const totalPages = await getTotalPages(page);
+
+        return {
+          downloaded: 0,
+          downloadDir: absoluteDownloadDir,
+          totalPages,
+          totalRecords,
+        };
+      }
+
       // Có kết quả — thu thập rows và thoát vòng lặp retry
       allItems = await collectAllRows(page, payload.limit);
       break;
@@ -99,7 +114,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     /* ----------------------------------------------------------------
      | FULL RUN — Tải PDF
      * -------------------------------------------------------------- */
-    const downloadedPaths = await downloadAllPdfsParallel(allItems, downloadDir);
+    const downloadedPaths = await downloadAllPdfsByClick(page, allItems, downloadDir);
 
     const downloadedFiles = downloadedPaths
       .map((file) => path.resolve(file))

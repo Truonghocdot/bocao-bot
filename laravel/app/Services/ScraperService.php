@@ -35,6 +35,27 @@ class ScraperService
         return $this->buildTimeEstimate($pageLimit);
     }
 
+    public function estimateRunTimeForDateRange(?string $fromDate = null, ?string $toDate = null, ?int $pageLimit = null): array
+    {
+        if ($pageLimit !== null) {
+            return $this->buildTimeEstimate($pageLimit);
+        }
+
+        try {
+            $pages = $this->estimateTotalPages($fromDate, $toDate);
+
+            return $this->buildTimeEstimate($pages);
+        } catch (\Throwable $e) {
+            Log::warning('Scraper preflight estimate failed, fallback to max timeout.', [
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->buildTimeEstimate(null);
+        }
+    }
+
     protected function buildTimeEstimate(?int $pageLimit): array
     {
         $startupSeconds = max(0, (int) config('services.scraper.startup_seconds', 90));
@@ -73,12 +94,34 @@ class ScraperService
         ];
     }
 
+    protected function estimateTotalPages(?string $fromDate = null, ?string $toDate = null): int
+    {
+        $response = Http::timeout((int) config('services.scraper.min_timeout', 180))
+            ->post($this->baseUrl, array_filter([
+                'fromDate' => $fromDate,
+                'toDate' => $toDate,
+                'estimateOnly' => true,
+            ], fn ($value) => $value !== null && $value !== ''));
+
+        if (! $response->successful() || ! $response->json('success')) {
+            throw new \RuntimeException('Estimate request failed.');
+        }
+
+        $totalPages = (int) $response->json('data.totalPages', 0);
+
+        if ($totalPages < 1) {
+            throw new \RuntimeException('Estimate request returned invalid totalPages.');
+        }
+
+        return $totalPages;
+    }
+
     /**
      * Call the Express Scraper API
      */
     public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null, ?string $downloadKey = null): array
     {
-        $timeEstimate = $this->buildTimeEstimate($limit);
+        $timeEstimate = $this->estimateRunTimeForDateRange($fromDate, $toDate, $limit);
         $timeout = $timeEstimate['timeout_seconds'];
 
         Log::info("Sending request to scraper API: {$this->baseUrl}", [

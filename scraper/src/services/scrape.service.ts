@@ -6,6 +6,7 @@ export interface ScrapeRequestPayload {
   limit?: number;
   dryRun?: boolean;
   downloadKey?: string;
+  estimateOnly?: boolean;
 }
 
 export async function runScrape(payload: ScrapeRequestPayload) {
@@ -15,5 +16,6 @@ export async function runScrape(payload: ScrapeRequestPayload) {
     limit: payload.limit,
     dryRun: payload.dryRun ?? false,
     downloadKey: payload.downloadKey,
+    estimateOnly: payload.estimateOnly ?? false,
   });
 }

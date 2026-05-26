@@ -305,7 +305,11 @@ class TelegramCommandService
 
         RunScraperJob::dispatch($job);
 
-        $timeEstimate = $this->scraperService->estimateRunTime($session['max_records']);
+        $timeEstimate = $this->scraperService->estimateRunTimeForDateRange(
+            $session['from_date'],
+            $session['to_date'],
+            $session['max_records']
+        );
         $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
         $targetWarning = $this->formatTargetWarning($target);
@@ -314,7 +318,7 @@ class TelegramCommandService
         🚀 *Đã đưa vào hàng đợi!*
         📅 {$session['from_date']} → {$session['to_date']}
         📄 Tối đa: *{$session['limit_label']}*
-        📎 Số file ước lượng: *{$estimatedFiles}*
+        📎 Số file dự kiến: *{$estimatedFiles}*
         ⏱ Thời gian ước lượng: *{$estimatedDuration}*
         📤 Gửi PDF tới: *{$target['label']}*
         {$targetWarning}
@@ -524,6 +528,12 @@ class TelegramCommandService
             ]
         );
 
+        $timeEstimate = $this->scraperService->estimateRunTimeForDateRange(
+            $session['from_date'],
+            $session['to_date'],
+            $session['max_records']
+        );
+        $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
         $targetWarning = $this->formatTargetWarning($target);
 
         $this->send($chatId, <<<TXT
@@ -532,6 +542,7 @@ class TelegramCommandService
         ⏰ Thời điểm chạy: *{$session['time']}*
         📅 Khoảng ngày cố định: `{$session['from_date']}` → `{$session['to_date']}`
         📄 Số trang tối đa: *{$session['limit_label']}*
+        📎 Số file dự kiến: *{$estimatedFiles}*
         📤 Gửi file tới: *{$target['label']}*
         {$targetWarning}
 
@@ -853,7 +864,7 @@ class TelegramCommandService
             return 'chưa xác định';
         }
 
-        return 'khoảng ' . number_format((int) $files, 0, ',', '.') . ' file';
+        return number_format((int) $files, 0, ',', '.') . ' file';
     }
 
     /**
