@@ -28,13 +28,17 @@ function jitter(ms: number): number {
   return ms + Math.floor(Math.random() * 800);
 }
 
-async function captureDownloadErrorScreenshot(page: Page, row: RowDetail, step: string): Promise<void> {
+async function captureDownloadErrorScreenshot(
+  page: Page,
+  row: RowDetail,
+  step: string,
+  downloadDir: string
+): Promise<void> {
   if (page.isClosed()) {
     return;
   }
 
-  const storageRoot = path.resolve(process.cwd(), "..", "storage");
-  const errDir = path.join(storageRoot, "errors");
+  const errDir = path.join(downloadDir, "errors");
   fs.mkdirSync(errDir, { recursive: true });
 
   const screenshotPath = path.join(
@@ -123,7 +127,7 @@ export async function downloadAllPdfsByClick(
         console.log(`⬇️ Downloaded: ${row.filename}`);
         break;
       } catch (error: any) {
-        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`);
+        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`, downloadDir);
 
         const isLastAttempt = attempt === maxAttempts;
         if (isLastAttempt) {
@@ -175,7 +179,7 @@ export async function downloadCurrentPagePdfsByClick(
         console.log(`⬇️ Downloaded: ${row.filename}`);
         break;
       } catch (error: any) {
-        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`);
+        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`, downloadDir);
 
         const isLastAttempt = attempt === maxAttempts;
         if (isLastAttempt) {

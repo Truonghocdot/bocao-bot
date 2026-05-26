@@ -17,6 +17,19 @@ const MAX_LISTING_RECOVERY_RETRIES = 3;
 const ANNOUNCEMENT_TYPE_SELECTOR = "#ctl00_C_ANNOUNCEMENT_TYPE_IDFilterFld";
 const FROM_DATE_SELECTOR = "#ctl00_C_PUBLISH_DATEFilterFldFrom";
 const TO_DATE_SELECTOR = "#ctl00_C_PUBLISH_DATEFilterFldTo";
+let errorScreenshotDir: string | null = null;
+
+export function setFormErrorScreenshotDir(dir: string): void {
+  errorScreenshotDir = dir;
+}
+
+function getFormErrorScreenshotDir(): string {
+  if (errorScreenshotDir) {
+    return errorScreenshotDir;
+  }
+
+  return path.resolve(process.cwd(), "..", "storage", "errors");
+}
 
 function isDkkdErrorPageUrl(url: string): boolean {
   return url.includes(DKKD_ERROR_PATH);
@@ -39,8 +52,7 @@ async function captureFormErrorScreenshot(page: Page, step: string): Promise<voi
     return;
   }
 
-  const storageRoot = path.resolve(process.cwd(), "..", "storage");
-  const errDir = path.join(storageRoot, "errors");
+  const errDir = getFormErrorScreenshotDir();
   fs.mkdirSync(errDir, { recursive: true });
 
   const screenshotPath = path.join(

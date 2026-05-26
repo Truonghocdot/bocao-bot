@@ -1,5 +1,5 @@
 import { createBrowser, createPage } from "../browser/index.js";
-import { openSite, fillSearchForm, submitSearch } from "../services/form.service.js";
+import { openSite, fillSearchForm, setFormErrorScreenshotDir, submitSearch } from "../services/form.service.js";
 import {
   collectAllRows,
   extractCurrentPageRows,
@@ -80,6 +80,7 @@ async function downloadResultsPageByPage(
 export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> {
   const downloadDir = generateDownloadDir(payload.downloadKey);
   const absoluteDownloadDir = path.resolve(downloadDir);
+  const errorDir = path.join(downloadDir, "errors");
   const MAX_RETRIES = 3;
 
   // Chỉ tạo thư mục nếu không phải dryRun
@@ -89,6 +90,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
   const browser = await createBrowser();
   const page = await createPage(browser);
+  setFormErrorScreenshotDir(errorDir);
 
   try {
     await openSite(page);
@@ -198,12 +200,10 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
   } catch (error: any) {
     console.error("❌ scrapeDKKD ERROR:", error.message);
 
-    const storageRoot = path.resolve(process.cwd(), "..", "storage");
-    const errDir = path.join(storageRoot, "errors");
-    fs.mkdirSync(errDir, { recursive: true });
+    fs.mkdirSync(errorDir, { recursive: true });
 
     await page.screenshot({
-      path: path.join(errDir, `error-${Date.now()}.png`),
+      path: path.join(errorDir, `error-${Date.now()}.png`),
       fullPage: true,
     });
 
