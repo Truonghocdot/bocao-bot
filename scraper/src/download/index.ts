@@ -148,3 +148,55 @@ export async function downloadAllPdfsByClick(
 
   return downloadedFiles;
 }
+
+export async function downloadCurrentPagePdfsByClick(
+  page: Page,
+  rows: RowDetail[],
+  downloadDir: string
+): Promise<string[]> {
+  console.log(`🚀 Bắt đầu tải ${rows.length} PDF trên page ${rows[0]?.pageIndex ?? "hiện tại"}...`);
+
+  const downloadedFiles: string[] = [];
+  const maxAttempts = getDownloadRetries();
+
+  for (const row of rows) {
+    if (page.isClosed()) {
+      console.warn(`⚠️ Browser đã đóng tại file #${row.globalIndex + 1}, dừng tải.`);
+      break;
+    }
+
+    await waitBetweenDownloads();
+
+    let successPath: string | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        successPath = await downloadSinglePdfByClick(page, row, downloadDir);
+        console.log(`⬇️ Downloaded: ${row.filename}`);
+        break;
+      } catch (error: any) {
+        await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`);
+
+        const isLastAttempt = attempt === maxAttempts;
+        if (isLastAttempt) {
+          console.warn(
+            `⚠️ Bỏ qua file #${row.globalIndex + 1} (${row.filename}) sau ${attempt} lần thử: ${error.message}`
+          );
+          break;
+        }
+
+        console.warn(
+          `⚠️ Tải lỗi file #${row.globalIndex + 1} (${row.filename}), thử lại ${attempt}/${maxAttempts}: ${error.message}`
+        );
+
+        await waitBetweenDownloads();
+      }
+    }
+
+    if (successPath) {
+      downloadedFiles.push(successPath);
+    }
+  }
+
+  return downloadedFiles;
+}
