@@ -41,12 +41,55 @@ async function downloadResultsPageByPage(
   downloadDir: string
 ): Promise<string[]> {
   const downloadedFiles: string[] = [];
-  let totalPages = await getTotalPages(page);
+  const totalRecords = await getTotalRecords(page);
+  const siteTotalPages = Math.max(1, Math.ceil(totalRecords / 20));
+  let totalPages = siteTotalPages;
   let processedRows = 0;
 
   if (limit && limit < totalPages) {
     totalPages = limit;
   }
+
+  const expectedRowsForPage = (pageNumber: number): number => {
+    if (pageNumber < totalPages || totalPages < siteTotalPages) {
+      return 20;
+    }
+
+    const remainder = totalRecords % 20;
+    return remainder === 0 ? 20 : remainder;
+  };
+
+  const extractRowsWithRetry = async (
+    pageNumber: number,
+    startIndex: number
+  ): Promise<RowDetail[]> => {
+    const expectedRows = expectedRowsForPage(pageNumber);
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const rows = await extractCurrentPageRows(page, pageNumber, startIndex);
+
+      if (rows.length >= expectedRows) {
+        return rows;
+      }
+
+      const message = `Page ${pageNumber} chỉ có ${rows.length}/${expectedRows} rows, retry ${attempt}/${maxAttempts}`;
+
+      if (attempt === maxAttempts) {
+        throw new Error(`INCOMPLETE_PAGE_ROWS: ${message}`);
+      }
+
+      console.warn(`⚠️ ${message}`);
+      await page.waitForTimeout(3000);
+
+      if (pageNumber > 1) {
+        await goToPage(page, pageNumber - 1);
+        await goToPage(page, pageNumber);
+      }
+    }
+
+    throw new Error(`INCOMPLETE_PAGE_ROWS: Page ${pageNumber} không đủ rows.`);
+  };
 
   console.log(`📚 Will scrape pages: ${totalPages}`);
 
@@ -55,11 +98,7 @@ async function downloadResultsPageByPage(
       await goToPage(page, currentPage);
     }
 
-    const rows = await extractCurrentPageRows(
-      page,
-      currentPage,
-      processedRows
-    );
+    const rows = await extractRowsWithRetry(currentPage, processedRows);
 
     processedRows += rows.length;
     console.log(`📦 Accumulated rows: ${processedRows}`);

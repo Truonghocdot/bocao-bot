@@ -93,6 +93,7 @@ export async function extractCurrentPageRows(
 ): Promise<RowDetail[]> {
   const rowsLocator = page.locator('#ctl00_C_CtlList tr');
   const totalRows = await rowsLocator.count();
+  const totalPdfButtons = await page.locator(PDF_BTN).count();
   const rows: RowDetail[] = [];
 
   // Thu thập state của form trên page hiện tại (dùng cho POST request qua axios)
@@ -154,7 +155,7 @@ export async function extractCurrentPageRows(
     });
   }
 
-  console.log(`📄 Page ${currentPage}: ${rows.length} rows`);
+  console.log(`📄 Page ${currentPage}: ${rows.length} rows (table tr: ${totalRows}, pdf buttons: ${totalPdfButtons})`);
 
   return rows;
 }
