@@ -17,7 +17,7 @@ function getDownloadRetries(): number {
 }
 
 function getDownloadDelayMs(): number {
-  return Math.max(0, Number(process.env.DOWNLOAD_WORKER_DELAY_MS || DEFAULT_CLICK_DOWNLOAD_DELAY_MS));
+  return Math.max(0, Number(process.env.DOWNLOAD_WORKER_DELAY_MS ||  DEFAULT_CLICK_DOWNLOAD_DELAY_MS));
 }
 
 function sleep(ms: number): Promise<void> {

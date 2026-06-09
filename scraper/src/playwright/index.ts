@@ -12,7 +12,11 @@ import {
 import { solveCaptcha } from "../captcha/index.js";
 import { downloadCurrentPagePdfsByClick } from "../download/index.js";
 import { generateDownloadDir } from "../utils/date.js";
-import { isDebug } from "../utils/contants.js";
+import {
+  DKKD_EMPTY_RESULT_CODE,
+  DKKD_EMPTY_RESULT_MESSAGE,
+  isDebug,
+} from "../utils/contants.js";
 import fs from "fs";
 import path from "path";
 
@@ -33,6 +37,14 @@ export interface ScrapeResult {
   preview?: RowDetail[];
   totalPages?: number;
   totalRecords?: number;
+}
+
+function isDkkdEmptyResultError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(DKKD_EMPTY_RESULT_CODE);
+}
+
+function makeDkkdEmptyResultError(): Error {
+  return new Error(`${DKKD_EMPTY_RESULT_CODE}: ${DKKD_EMPTY_RESULT_MESSAGE}`);
 }
 
 async function downloadResultsPageByPage(
@@ -142,7 +154,25 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
       console.log(`🤖 Solving captcha... (attempt ${attempt}/${MAX_RETRIES})`);
       const token = await solveCaptcha(page.url());
 
-      await submitSearch(page, token, payload.fromDate, payload.toDate);
+      try {
+        await submitSearch(page, token, payload.fromDate, payload.toDate);
+      } catch (error: any) {
+        if (!isDkkdEmptyResultError(error)) {
+          throw error;
+        }
+
+        console.warn(`⚠️ Kết quả trống sau lần ${attempt}. ${
+          attempt < MAX_RETRIES ? "Thử lại (re-solve captcha)..." : "Hết lần thử, báo dữ liệu trống."
+        }`);
+
+        if (attempt < MAX_RETRIES) {
+          await openSite(page);
+          await fillSearchForm(page, payload.fromDate, payload.toDate);
+          continue;
+        }
+
+        throw makeDkkdEmptyResultError();
+      }
 
       // Kiểm tra bảng có trống không
       const empty = await isEmptyResultTable(page);
@@ -153,13 +183,12 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
         }`);
 
         if (attempt < MAX_RETRIES) {
-          // Không cần load lại trang, chỉ cần re-solve captcha và submit lại
-          // fillSearchForm không cần chạy lại vì form ASP.NET giữ nguyên state
+          await openSite(page);
+          await fillSearchForm(page, payload.fromDate, payload.toDate);
           continue;
         }
 
-        // Hết retry — trả về kết quả rỗng thay vì crash
-        return { downloaded: 0, downloadDir: absoluteDownloadDir };
+        throw makeDkkdEmptyResultError();
       }
 
       if (payload.estimateOnly) {

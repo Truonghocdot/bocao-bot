@@ -20,6 +20,7 @@ class RunScraperJob implements ShouldQueue
     protected const MAX_DB_ERROR_MESSAGE_LENGTH = 2000;
     protected const DKKD_SITE_ERROR_CODE = 'DKKD_SITE_ERROR';
     protected const DKKD_AUTH_REDIRECT_CODE = 'DKKD_AUTH_REDIRECT';
+    protected const DKKD_EMPTY_RESULT_CODE = 'DKKD_EMPTY_RESULT';
 
     /**
      * Scrape job only waits for the Express scraper. Telegram delivery runs
@@ -146,6 +147,10 @@ class RunScraperJob implements ShouldQueue
 
         if (str_contains($msg, 'SCRAPER_BUSY')) {
             return "⏳ Hệ thống scraper đang bận xử lý một yêu cầu khác. Vui lòng thử lại sau ít phút.";
+        }
+
+        if (str_contains($msg, self::DKKD_EMPTY_RESULT_CODE)) {
+            return "ℹ️ Không có dữ liệu được trả về từ trang đăng ký kinh doanh.";
         }
 
         if (str_contains($msg, self::DKKD_SITE_ERROR_CODE)) {

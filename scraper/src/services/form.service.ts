@@ -4,6 +4,8 @@ import path from "path";
 import {
   DKKD_AUTH_REDIRECT_CODE,
   DKKD_AUTH_REDIRECT_MESSAGE,
+  DKKD_EMPTY_RESULT_CODE,
+  DKKD_EMPTY_RESULT_MESSAGE,
   DKKD_ERROR_CODE,
   DKKD_ERROR_MESSAGE,
   DKKD_ERROR_PATH,
@@ -45,6 +47,36 @@ function isListingPageUrl(url: string): boolean {
 
 function makeDkkdSiteError(step: string): Error {
   return new Error(`${DKKD_ERROR_CODE}: ${DKKD_ERROR_MESSAGE} [step=${step}]`);
+}
+
+function makeDkkdEmptyResultError(step: string): Error {
+  return new Error(`${DKKD_EMPTY_RESULT_CODE}: ${DKKD_EMPTY_RESULT_MESSAGE} [step=${step}]`);
+}
+
+type SubmitDiagnostic = {
+  url: string;
+  title: string;
+  tableText: string;
+  tableHtmlLength: number;
+  captchaLength: number;
+  validationText: string;
+};
+
+function isEmptyResultDiagnostic(diagnostic: unknown): diagnostic is SubmitDiagnostic {
+  if (!diagnostic || typeof diagnostic !== "object") {
+    return false;
+  }
+
+  const tableText = "tableText" in diagnostic
+    ? String((diagnostic as { tableText?: unknown }).tableText ?? "")
+    : "";
+
+  if (tableText.includes("Danh sách trống")) {
+    return true;
+  }
+
+  const totalMatch = tableText.match(/Tổng cộng\s*:?\s*(\d+)/i);
+  return Boolean(totalMatch && parseInt(totalMatch[1], 10) === 0);
 }
 
 async function captureFormErrorScreenshot(page: Page, step: string): Promise<void> {
@@ -389,9 +421,22 @@ export async function submitSearch(page: Page, token: string, fromDate?: string,
       throw makeDkkdSiteError("submitSearch:waitResults");
     }
 
+    if (isEmptyResultDiagnostic(diagnostic)) {
+      throw makeDkkdEmptyResultError("submitSearch:waitResults");
+    }
+
     throw error;
   }
 
   console.log("✅ Result table updated");
   assertNotDkkdErrorPage(page, "submitSearch:end");
+
+  const tableText = await page
+    .locator("#ctl00_C_CtlList")
+    .innerText({ timeout: 10000 })
+    .catch(() => "");
+
+  if (tableText.includes("Danh sách trống")) {
+    throw makeDkkdEmptyResultError("submitSearch:emptyResults");
+  }
 }
