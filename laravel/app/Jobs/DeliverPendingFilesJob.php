@@ -60,15 +60,19 @@ class DeliverPendingFilesJob implements ShouldQueue
             return;
         }
 
+        $targetChatIds = $this->targetChatIds();
+
         Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery started.", [
             'files' => count($files),
+            'targets' => count($targetChatIds),
             'download_dir' => $downloadDir,
             'status' => $this->jobRecord->status,
         ]);
 
-        $this->notifySource("📦 Tìm thấy *" . count($files) . "* file PDF đã tải. Đang gửi...");
+        $this->notifySource("📦 Tìm thấy *" . count($files) . "* file PDF đã tải. Đang gửi tới *" . count($targetChatIds) . "* nơi...");
 
-        $sent = $this->deliverFiles($files, $deliveryService);
+        $sent = $this->deliverFiles($files, $targetChatIds, $deliveryService);
+        $expectedSends = count($files) * count($targetChatIds);
 
         $updates = [
             'downloaded_count' => count($files),
@@ -84,15 +88,15 @@ class DeliverPendingFilesJob implements ShouldQueue
         Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery completed.", [
             'sent' => $sent,
             'files' => count($files),
+            'targets' => count($targetChatIds),
         ]);
 
-        $this->notifySource("✅ Đã gửi *{$sent}/" . count($files) . "* file PDF.");
+        $this->notifySource("✅ Đã gửi *{$sent}/{$expectedSends}* lượt gửi PDF.");
     }
 
-    protected function deliverFiles(array $files, TelegramDeliveryService $deliveryService): int
+    protected function deliverFiles(array $files, array $targetChatIds, TelegramDeliveryService $deliveryService): int
     {
-        $sent           = 0;
-        $targetChatId   = $this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id;
+        $sent = 0;
         $fallbackChatId = $this->jobRecord->chat_id;
 
         foreach ($files as $file) {
@@ -100,40 +104,62 @@ class DeliverPendingFilesJob implements ShouldQueue
                 continue;
             }
 
-            try {
-                $deliveryService->sendDocumentToTarget([
-                    'chat_id'  => $targetChatId,
-                    'document' => InputFile::create($file),
-                    'caption'  => "PDF DKKD\n" . basename($file),
-                ]);
-                $sent++;
-                $deliveryService->pauseBetweenDocumentSends();
-            } catch (\Throwable $e) {
-                $msg = mb_strtolower($e->getMessage());
-                $targetUnavailable = str_contains($msg, 'chat not found')
-                    || str_contains($msg, 'bot was blocked by the user')
-                    || str_contains($msg, 'user is deactivated');
+            $usedFallback = false;
 
-                if ($targetUnavailable && $targetChatId !== $fallbackChatId) {
-                    try {
-                        $deliveryService->sendDocumentToSource([
-                            'chat_id'  => $fallbackChatId,
-                            'document' => InputFile::create($file),
-                            'caption'  => "PDF DKKD\n" . basename($file),
-                        ]);
-                        $sent++;
-                        $deliveryService->pauseBetweenDocumentSends();
-                        continue;
-                    } catch (\Throwable $fallbackErr) {
-                        Log::warning("DeliverPendingFilesJob: fallback send failed — " . $fallbackErr->getMessage());
+            foreach ($targetChatIds as $targetChatId) {
+                try {
+                    $deliveryService->sendDocumentToTarget([
+                        'chat_id'  => $targetChatId,
+                        'document' => InputFile::create($file),
+                        'caption'  => "PDF DKKD\n" . basename($file),
+                    ]);
+                    $sent++;
+                    $deliveryService->pauseBetweenDocumentSends();
+                } catch (\Throwable $e) {
+                    $msg = mb_strtolower($e->getMessage());
+                    $targetUnavailable = str_contains($msg, 'chat not found')
+                        || str_contains($msg, 'bot was blocked by the user')
+                        || str_contains($msg, 'user is deactivated');
+
+                    if ($targetUnavailable
+                        && ! $usedFallback
+                        && $targetChatId !== $fallbackChatId
+                        && ! in_array($fallbackChatId, $targetChatIds, true)) {
+                        try {
+                            $deliveryService->sendDocumentToSource([
+                                'chat_id'  => $fallbackChatId,
+                                'document' => InputFile::create($file),
+                                'caption'  => "PDF DKKD\n" . basename($file),
+                            ]);
+                            $sent++;
+                            $usedFallback = true;
+                            $deliveryService->pauseBetweenDocumentSends();
+                            continue;
+                        } catch (\Throwable $fallbackErr) {
+                            Log::warning("DeliverPendingFilesJob: fallback send failed — " . $fallbackErr->getMessage());
+                        }
                     }
-                }
 
-                Log::warning("DeliverPendingFilesJob: failed to send {$file} — " . $e->getMessage());
+                    Log::warning("DeliverPendingFilesJob: failed to send {$file} to {$targetChatId} — " . $e->getMessage());
+                }
             }
         }
 
         return $sent;
+    }
+
+    protected function targetChatIds(): array
+    {
+        $targetChatIds = $this->jobRecord->target_chat_ids ?? [];
+
+        if (empty($targetChatIds)) {
+            $targetChatIds = [$this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map(static fn ($chatId) => trim((string) $chatId), $targetChatIds),
+            static fn (string $chatId) => $chatId !== ''
+        )));
     }
 
     protected function notifySource(string $text): void

@@ -157,9 +157,14 @@ try {
                 return;
             }
 
+            $targetChatIds = $schedule->target_chat_ids ?: [
+                $schedule->target_chat_id ?: $schedule->chat_id,
+            ];
+
             $job = ScrapeJob::create([
                 'chat_id'     => $schedule->chat_id,
-                'target_chat_id' => $schedule->target_chat_id ?: $schedule->chat_id,
+                'target_chat_id' => $targetChatIds[0],
+                'target_chat_ids' => $targetChatIds,
                 'scrape_schedule_id' => $schedule->id,
                 'status'      => 'pending',
                 'from_date'   => $fromDate,

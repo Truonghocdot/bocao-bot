@@ -264,9 +264,10 @@ class TelegramCommandService
         $this->send($chatId, <<<TXT
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
-        Nhập một trong các giá trị sau:
+        Nhập một hoặc nhiều đích, ngăn cách bằng dấu phẩy, chấm phẩy hoặc xuống dòng:
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
+        Ví dụ: `@nguoi_nhan, -1001234567890`
 
         Lưu ý:
         - Nếu nhập `@username` thì file sẽ được gửi bằng *bot chính*, và tài khoản đó phải *đã từng chat với bot chính* trước đó.
@@ -281,18 +282,22 @@ class TelegramCommandService
     protected function onRunTargetInput(string $chatId, string $input): void
     {
         $session = $this->conversation->get($chatId);
-        $target = $this->resolveTargetChat($input, $chatId);
+        $targetResolution = $this->resolveTargetChats($input, $chatId);
+        $targets = $targetResolution['targets'];
 
-        if ($target === null) {
-            $this->send($chatId, $this->buildTargetChatResolutionError($input, $chatId));
+        if (empty($targets) || ! empty($targetResolution['invalid'])) {
+            $this->send($chatId, $this->buildTargetChatResolutionError($targetResolution['invalid']));
             return;
         }
+
+        $targetChatIds = array_column($targets, 'chat_id');
 
         $this->conversation->clear($chatId);
 
         $job = ScrapeJob::create([
             'chat_id'     => $chatId,
-            'target_chat_id' => $target['chat_id'],
+            'target_chat_id' => $targetChatIds[0],
+            'target_chat_ids' => $targetChatIds,
             'status'      => 'pending',
             'from_date'   => $session['from_date'],
             'to_date'     => $session['to_date'],
@@ -310,7 +315,8 @@ class TelegramCommandService
         );
         $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
-        $targetWarning = $this->formatTargetWarning($target);
+        $targetWarning = $this->formatTargetWarnings($targets);
+        $targetLabels = $this->formatTargetLabels($targets);
 
         RunScraperJob::dispatch($job);
 
@@ -320,7 +326,7 @@ class TelegramCommandService
         📄 Tối đa: *{$session['limit_label']}*
         📎 Số file dự kiến: *{$estimatedFiles}*
         ⏱ Thời gian ước lượng: *{$estimatedDuration}*
-        📤 Gửi PDF tới: *{$target['label']}*
+        📤 Gửi PDF tới: {$targetLabels}
         {$targetWarning}
 
         Bot sẽ gửi từng file PDF sau khi tải xong.
@@ -336,7 +342,7 @@ class TelegramCommandService
 
         if ($schedule) {
             $limitLabel   = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
-            $targetChatId = $schedule->target_chat_id ?: $chatId;
+            $targetChatIds = $schedule->target_chat_ids ?: [$schedule->target_chat_id ?: $chatId];
             $icon         = $schedule->is_active ? '✅' : '❌';
             $status       = $schedule->is_active ? 'BẬT' : 'TẮT';
             $dateRange    = ($schedule->from_date && $schedule->to_date)
@@ -348,7 +354,7 @@ class TelegramCommandService
             ⏰ Thời điểm chạy: `{$schedule->cron_expression}`
             📅 Khoảng ngày cố định: {$dateRange}
             📄 Số trang tối đa: *{$limitLabel}*
-            📤 Gửi file tới: {$this->formatChatTargetLabel($targetChatId)}
+            📤 Gửi file tới: {$this->formatChatTargetLabels($targetChatIds)}
 
             Lịch này chỉ chạy *một lần* theo cấu hình dưới đây. Sau khi chạy xong, bot sẽ tự tắt lịch và chờ bạn cài lại.
 
@@ -489,9 +495,10 @@ class TelegramCommandService
         📤 *Bước 4/4 — Nơi nhận file*
         File PDF sau khi tải xong sẽ được gửi tới đâu?
 
-        Nhập một trong các giá trị sau:
+        Nhập một hoặc nhiều đích, ngăn cách bằng dấu phẩy, chấm phẩy hoặc xuống dòng:
         - `@username`
         - `chat_id` do bot gửi file trả về, ví dụ `-1001234567890`
+        Ví dụ: `@nguoi_nhan, -1001234567890`
 
         Lưu ý:
         - Nếu nhập `@username` thì file sẽ được gửi bằng *bot chính*, và tài khoản đó phải *đã từng chat với bot chính* trước đó.
@@ -505,12 +512,15 @@ class TelegramCommandService
     /** /schedule — Nhận chat nhận file → lưu lịch */
     protected function onScheduleTargetInput(string $chatId, string $input): void
     {
-        $target = $this->resolveTargetChat($input, $chatId);
+        $targetResolution = $this->resolveTargetChats($input, $chatId);
+        $targets = $targetResolution['targets'];
 
-        if ($target === null) {
-            $this->send($chatId, $this->buildTargetChatResolutionError($input, $chatId));
+        if (empty($targets) || ! empty($targetResolution['invalid'])) {
+            $this->send($chatId, $this->buildTargetChatResolutionError($targetResolution['invalid']));
             return;
         }
+
+        $targetChatIds = array_column($targets, 'chat_id');
 
         $session = $this->conversation->get($chatId);
         $this->conversation->clear($chatId);
@@ -518,7 +528,8 @@ class TelegramCommandService
         ScrapeSchedule::updateOrCreate(
             ['chat_id' => $chatId],
             [
-                'target_chat_id'  => $target['chat_id'],
+                'target_chat_id'  => $targetChatIds[0],
+                'target_chat_ids' => $targetChatIds,
                 'from_date'       => $session['from_date'],
                 'to_date'         => $session['to_date'],
                 'cron_expression' => $session['cron'],
@@ -534,7 +545,8 @@ class TelegramCommandService
             $session['max_records']
         );
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
-        $targetWarning = $this->formatTargetWarning($target);
+        $targetWarning = $this->formatTargetWarnings($targets);
+        $targetLabels = $this->formatTargetLabels($targets);
 
         $this->send($chatId, <<<TXT
         ✅ *Lịch tự động đã được lưu!*
@@ -543,7 +555,7 @@ class TelegramCommandService
         📅 Khoảng ngày cố định: `{$session['from_date']}` → `{$session['to_date']}`
         📄 Số trang tối đa: *{$session['limit_label']}*
         📎 Số file dự kiến: *{$estimatedFiles}*
-        📤 Gửi file tới: *{$target['label']}*
+        📤 Gửi file tới: {$targetLabels}
         {$targetWarning}
 
         Bot sẽ chạy *một lần* theo lịch trên, sau đó tự tắt và chờ bạn cài lại.
@@ -562,11 +574,11 @@ class TelegramCommandService
             $limitLabel  = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
             $icon        = $schedule->is_active ? '✅' : '❌';
             $status      = $schedule->is_active ? 'BẬT' : 'TẮT';
-            $targetChatId = $schedule->target_chat_id ?: $chatId;
+            $targetChatIds = $schedule->target_chat_ids ?: [$schedule->target_chat_id ?: $chatId];
             $rangeLabel = ($schedule->from_date && $schedule->to_date)
                 ? "{$schedule->from_date}→{$schedule->to_date}"
                 : 'chưa có range';
-            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · `{$rangeLabel}` · {$limitLabel} · gửi {$this->formatChatTargetLabel($targetChatId)}";
+            $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · `{$rangeLabel}` · {$limitLabel} · gửi {$this->formatChatTargetLabels($targetChatIds)}";
         } else {
             $scheduleText = "_Chưa cấu hình — dùng /schedule_";
         }
@@ -791,16 +803,56 @@ class TelegramCommandService
         ];
     }
 
-    protected function buildTargetChatResolutionError(string $input, string $currentChatId): string
+    /**
+     * @return array{targets: array<int, array<string, string>>, invalid: string[]}
+     */
+    protected function resolveTargetChats(string $input, string $currentChatId): array
     {
-        return "❌ Không nhận diện được đích nhận `{$input}`.\nVui lòng nhập `@username` hoặc `chat_id` do bot gửi file trả về.";
+        $trimmed = trim($input);
+
+        if ($trimmed === '') {
+            return ['targets' => [], 'invalid' => []];
+        }
+
+        $inputs = $this->isCurrentGroupKeyword($trimmed)
+            ? [$trimmed]
+            : (preg_split('/[\s,;]+/u', $trimmed, -1, PREG_SPLIT_NO_EMPTY) ?: []);
+
+        $targets = [];
+        $invalid = [];
+
+        foreach ($inputs as $targetInput) {
+            $target = $this->resolveTargetChat($targetInput, $currentChatId);
+
+            if ($target === null) {
+                $invalid[] = $targetInput;
+                continue;
+            }
+
+            $targets[$target['chat_id']] = $target;
+        }
+
+        return [
+            'targets' => array_values($targets),
+            'invalid' => array_values(array_unique($invalid)),
+        ];
     }
 
-    protected function formatTargetWarning(array $target): string
+    protected function buildTargetChatResolutionError(array $invalid): string
     {
-        $warning = trim((string) ($target['warning'] ?? ''));
+        $invalidLabel = empty($invalid) ? '' : ': `' . implode('`, `', $invalid) . '`';
 
-        return $warning !== '' ? "\n⚠️ {$warning}" : '';
+        return "❌ Không nhận diện được đích nhận{$invalidLabel}.\nVui lòng nhập `@username` hoặc `chat_id` do bot gửi file trả về, cách nhau bằng dấu phẩy, chấm phẩy hoặc xuống dòng.";
+    }
+
+    protected function formatTargetWarnings(array $targets): string
+    {
+        $warnings = array_values(array_unique(array_filter(array_map(
+            static fn (array $target) => trim((string) ($target['warning'] ?? '')),
+            $targets
+        ))));
+
+        return empty($warnings) ? '' : "\n⚠️ " . implode("\n⚠️ ", $warnings);
     }
 
     protected function formatChatTargetLabel(?string $chatId): string
@@ -826,6 +878,22 @@ class TelegramCommandService
         }
 
         return "`{$chatId}`";
+    }
+
+    protected function formatChatTargetLabels(array $chatIds): string
+    {
+        return implode(', ', array_map(
+            fn ($chatId) => $this->formatChatTargetLabel((string) $chatId),
+            array_values(array_unique(array_filter($chatIds)))
+        ));
+    }
+
+    protected function formatTargetLabels(array $targets): string
+    {
+        return implode(', ', array_map(
+            static fn (array $target) => '*' . $target['label'] . '*',
+            $targets
+        ));
     }
 
     protected function makeDownloadKey(ScrapeJob $job): string

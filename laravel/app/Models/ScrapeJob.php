@@ -13,6 +13,7 @@ class ScrapeJob extends Model
     protected $fillable = [
         'chat_id',
         'target_chat_id',
+        'target_chat_ids',
         'scrape_schedule_id',
         'status',
         'from_date',
@@ -30,6 +31,7 @@ class ScrapeJob extends Model
     {
         return [
             'delivered_at' => 'datetime',
+            'target_chat_ids' => 'array',
         ];
     }
 

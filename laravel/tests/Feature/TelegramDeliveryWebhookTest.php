@@ -18,7 +18,8 @@ class TelegramDeliveryWebhookTest extends TestCase
         $bot = Mockery::mock();
         $bot->shouldReceive('sendMessage')->once()->with(Mockery::on(function (array $params) {
             return $params['chat_id'] === '-1001234567890'
-                && str_contains($params['text'], 'Chat ID nhận file: `-1001234567890`');
+                && str_contains($params['text'], 'Chat ID nhận file: <code>-1001234567890</code>')
+                && $params['parse_mode'] === 'HTML';
         }));
 
         $manager = Mockery::mock();

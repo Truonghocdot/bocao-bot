@@ -13,6 +13,7 @@ class ScrapeSchedule extends Model
     protected $fillable = [
         'chat_id',
         'target_chat_id',
+        'target_chat_ids',
         'from_date',
         'to_date',
         'is_active',
@@ -22,6 +23,13 @@ class ScrapeSchedule extends Model
         'last_download_key',
         'last_download_dir',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'target_chat_ids' => 'array',
+        ];
+    }
 
     public function jobs(): HasMany
     {

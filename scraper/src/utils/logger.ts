@@ -52,6 +52,25 @@ function formatLine(level: Level, args: unknown[]): string {
   return `[${nowString()}] ${appEnv}.${LEVEL_MAP[level]}: ${message}`;
 }
 
+function isBrokenPipeError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === "object"
+      && "code" in error
+      && (error as NodeJS.ErrnoException).code === "EPIPE"
+  );
+}
+
+function writeToProcessStream(stream: NodeJS.WriteStream, output: string): void {
+  try {
+    stream.write(output);
+  } catch (error) {
+    if (!isBrokenPipeError(error)) {
+      writeToLogFile(`${formatLine("error", ["Logger stream write failed", error])}\n`);
+    }
+  }
+}
+
 function write(level: Level, args: unknown[]): void {
   const line = formatLine(level, args);
   const output = `${line}\n`;
@@ -59,11 +78,11 @@ function write(level: Level, args: unknown[]): void {
   writeToLogFile(output);
 
   if (level === "error" || level === "warn") {
-    process.stderr.write(output);
+    writeToProcessStream(process.stderr, output);
     return;
   }
 
-  process.stdout.write(output);
+  writeToProcessStream(process.stdout, output);
 }
 
 function logFilePath(): string {
@@ -83,6 +102,18 @@ function writeToLogFile(output: string): void {
 }
 
 export function setupConsoleLogger(): void {
+  process.stdout.on("error", (error) => {
+    if (!isBrokenPipeError(error)) {
+      writeToLogFile(`${formatLine("error", ["stdout error", error])}\n`);
+    }
+  });
+
+  process.stderr.on("error", (error) => {
+    if (!isBrokenPipeError(error)) {
+      writeToLogFile(`${formatLine("error", ["stderr error", error])}\n`);
+    }
+  });
+
   console.log = (...args: unknown[]) => write("info", args);
   console.info = (...args: unknown[]) => write("info", args);
   console.warn = (...args: unknown[]) => write("warn", args);
