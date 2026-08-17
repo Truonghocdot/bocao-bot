@@ -91,9 +91,10 @@ export async function extractCurrentPageRows(
   currentPage: number,
   startIndex: number
 ): Promise<RowDetail[]> {
-  const rowsLocator = page.locator('#ctl00_C_CtlList tr');
+  const resultTable = page.locator("#ctl00_C_CtlList");
+  const rowsLocator = resultTable.locator("tr");
   const totalRows = await rowsLocator.count();
-  const totalPdfButtons = await page.locator(PDF_BTN).count();
+  const totalPdfButtons = await resultTable.locator(PDF_BTN).count();
   const rows: RowDetail[] = [];
 
   // Thu thập state của form trên page hiện tại (dùng cho POST request qua axios)
@@ -113,7 +114,9 @@ export async function extractCurrentPageRows(
   const userAgent = await page.evaluate(() => navigator.userAgent);
   const pdfUrl = page.url();
 
-  for (let i = 1; i < totalRows - 1; i++) {
+  // The result table can have different header/footer rows depending on the
+  // number of records. Identify records by their PDF button instead of row position.
+  for (let i = 0; i < totalRows; i++) {
     const row = rowsLocator.nth(i);
     const btn = row.locator(PDF_BTN);
 
