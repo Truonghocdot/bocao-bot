@@ -71,10 +71,8 @@ class TelegramDeliveryWebhookController extends Controller
                             'last_seen_at' => now(),
                         ]);
                         
-                        // Check if it's a specific command like /start or /id to reply even if already exists
-                        $text = data_get($payload, 'message.text', '');
-                        if (str_starts_with($text, '/start') || str_starts_with($text, '/id')) {
-                             $this->replyWithChatId($existingChat);
+                        if (! $isKicked && $this->shouldReplyWithChatId($payload)) {
+                            $this->replyWithChatId($existingChat);
                         }
                     }
                 }
@@ -88,6 +86,28 @@ class TelegramDeliveryWebhookController extends Controller
         }
 
         return response()->json(['ok' => true]);
+    }
+
+    protected function shouldReplyWithChatId(array $payload): bool
+    {
+        $text = (string) data_get($payload, 'message.text', '');
+
+        if (str_starts_with($text, '/start') || str_starts_with($text, '/id')) {
+            return true;
+        }
+
+        return $this->isDeliveryBotAddedToChat($payload);
+    }
+
+    protected function isDeliveryBotAddedToChat(array $payload): bool
+    {
+        if (! isset($payload['my_chat_member'])) {
+            return false;
+        }
+
+        $status = data_get($payload, 'my_chat_member.new_chat_member.status');
+
+        return in_array($status, ['member', 'administrator', 'creator'], true);
     }
 
     protected function replyWithChatId(TelegramChat $chat): void

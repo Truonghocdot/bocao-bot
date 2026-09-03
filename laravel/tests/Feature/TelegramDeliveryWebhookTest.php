@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\TelegramChat;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use Telegram\Bot\Laravel\Facades\Telegram;
@@ -78,6 +79,49 @@ class TelegramDeliveryWebhookTest extends TestCase
             'chat_id' => '123456',
             'type' => 'private',
             'username' => 'receiver_user',
+            'is_bot_member' => true,
+        ]);
+    }
+
+    public function test_delivery_webhook_replies_when_existing_group_receives_member_update(): void
+    {
+        config(['telegram.delivery_bot' => 'delivery']);
+
+        TelegramChat::create([
+            'chat_id' => '-1001234567890',
+            'type' => 'group',
+            'title' => 'Old title',
+            'is_bot_member' => false,
+        ]);
+
+        $bot = Mockery::mock();
+        $bot->shouldReceive('sendMessage')->once()->with(Mockery::on(function (array $params) {
+            return $params['chat_id'] === '-1001234567890'
+                && str_contains($params['text'], 'Chat ID nhận file: <code>-1001234567890</code>')
+                && $params['parse_mode'] === 'HTML';
+        }));
+
+        $manager = Mockery::mock();
+        $manager->shouldReceive('bot')->once()->with('delivery')->andReturn($bot);
+        Telegram::swap($manager);
+
+        $this->postJson('/api/telegram/delivery-webhook', [
+            'my_chat_member' => [
+                'chat' => [
+                    'id' => -1001234567890,
+                    'type' => 'group',
+                    'title' => 'Group nhận PDF',
+                ],
+                'new_chat_member' => [
+                    'status' => 'member',
+                ],
+            ],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('telegram_chats', [
+            'chat_id' => '-1001234567890',
+            'type' => 'group',
+            'title' => 'Group nhận PDF',
             'is_bot_member' => true,
         ]);
     }
