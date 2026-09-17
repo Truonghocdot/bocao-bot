@@ -11,11 +11,18 @@ use Telegram\Bot\Laravel\Facades\Telegram;
 class TelegramDeliveryService
 {
     protected const DEFAULT_SEND_DELAY_US = 350000;
+
     protected const MAX_RATE_LIMIT_RETRIES = 5;
+
+    public function __construct(private readonly TelegramDocumentTransport $documentTransport) {}
 
     public function sendDocumentToTarget(array $params): mixed
     {
         $chatId = (string) ($params['chat_id'] ?? '');
+
+        if (isset($params['document_path'])) {
+            return $this->sendPdfWithTransport($params, $chatId);
+        }
 
         return $this->sendWithRateLimitRetry(
             fn () => $this->telegramBotForChat($chatId)->sendDocument($params)
@@ -24,6 +31,10 @@ class TelegramDeliveryService
 
     public function sendDocumentToSource(array $params): mixed
     {
+        if (isset($params['document_path'])) {
+            return $this->sendPdfWithTransport($params, (string) ($params['chat_id'] ?? ''), true);
+        }
+
         return $this->sendWithRateLimitRetry(
             fn () => Telegram::sendDocument($params)
         );
@@ -37,12 +48,13 @@ class TelegramDeliveryService
     protected function deliveryBotName(): string
     {
         $botName = (string) config('telegram.delivery_bot', 'delivery');
-        
-        if (!config("telegram.bots.{$botName}")) {
-            \Illuminate\Support\Facades\Log::warning("TelegramDeliveryService: Bot [{$botName}] is not configured in config/telegram.php. Falling back to 'delivery'.");
+
+        if (! config("telegram.bots.{$botName}")) {
+            Log::warning("TelegramDeliveryService: Bot [{$botName}] is not configured in config/telegram.php. Falling back to 'delivery'.");
+
             return 'delivery';
         }
-        
+
         return $botName;
     }
 
@@ -53,6 +65,25 @@ class TelegramDeliveryService
         }
 
         return Telegram::bot($this->deliveryBotName());
+    }
+
+    protected function sendPdfWithTransport(array $params, string $chatId, bool $forcePrimary = false): array
+    {
+        $botName = $forcePrimary || $this->shouldUsePrimaryBot($chatId)
+            ? (string) config('telegram.default', 'mybot')
+            : $this->deliveryBotName();
+        $token = (string) config("telegram.bots.{$botName}.token");
+
+        if ($token === '' || $token === 'YOUR-BOT-TOKEN') {
+            throw new \RuntimeException("Telegram bot token [{$botName}] is not configured.");
+        }
+
+        return $this->documentTransport->send(
+            $token,
+            $chatId,
+            (string) $params['document_path'],
+            (string) ($params['caption'] ?? '')
+        );
     }
 
     protected function shouldUsePrimaryBot(string $chatId): bool
@@ -90,7 +121,7 @@ class TelegramDeliveryService
                     throw $e;
                 }
 
-                Log::warning("TelegramDeliveryService: rate limited, retrying after {$retryAfter}s (attempt {$attempt}/" . self::MAX_RATE_LIMIT_RETRIES . ").");
+                Log::warning("TelegramDeliveryService: rate limited, retrying after {$retryAfter}s (attempt {$attempt}/".self::MAX_RATE_LIMIT_RETRIES.').');
 
                 sleep($retryAfter);
             }

@@ -3,6 +3,14 @@ import fs from "fs";
 import path from "path";
 import { RowDetail, goToPage } from "../services/extract.service.js";
 
+export interface DownloadedPdf {
+  path: string;
+  filename: string;
+  pageIndex: number;
+  globalIndex: number;
+  companyName: string;
+}
+
 const PDF_BTN = 'input[id*="LnkGetPDFActive"]';
 const DEFAULT_CLICK_DOWNLOAD_TIMEOUT_MS = 60000;
 const DEFAULT_CLICK_DOWNLOAD_RETRIES = 2;
@@ -99,10 +107,10 @@ export async function downloadAllPdfsByClick(
   page: Page,
   rows: RowDetail[],
   downloadDir: string
-): Promise<string[]> {
+): Promise<DownloadedPdf[]> {
   console.log(`🚀 Bắt đầu tải ${rows.length} PDF bằng click browser...`);
 
-  const downloadedFiles: string[] = [];
+  const downloadedFiles: DownloadedPdf[] = [];
   const maxAttempts = getDownloadRetries();
   let currentPage = 1;
 
@@ -146,7 +154,13 @@ export async function downloadAllPdfsByClick(
     }
 
     if (successPath) {
-      downloadedFiles.push(successPath);
+      downloadedFiles.push({
+        path: successPath,
+        filename: row.filename,
+        pageIndex: row.pageIndex,
+        globalIndex: row.globalIndex,
+        companyName: row.companyName,
+      });
     }
   }
 
@@ -157,10 +171,10 @@ export async function downloadCurrentPagePdfsByClick(
   page: Page,
   rows: RowDetail[],
   downloadDir: string
-): Promise<string[]> {
+): Promise<DownloadedPdf[]> {
   console.log(`🚀 Bắt đầu tải ${rows.length} PDF trên page ${rows[0]?.pageIndex ?? "hiện tại"}...`);
 
-  const downloadedFiles: string[] = [];
+  const downloadedFiles: DownloadedPdf[] = [];
   const maxAttempts = getDownloadRetries();
 
   for (const row of rows) {
@@ -198,7 +212,13 @@ export async function downloadCurrentPagePdfsByClick(
     }
 
     if (successPath) {
-      downloadedFiles.push(successPath);
+      downloadedFiles.push({
+        path: successPath,
+        filename: row.filename,
+        pageIndex: row.pageIndex,
+        globalIndex: row.globalIndex,
+        companyName: row.companyName,
+      });
     }
   }
 

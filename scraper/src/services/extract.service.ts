@@ -218,7 +218,7 @@ export async function getTotalRecords(page: Page): Promise<number> {
 export async function getTotalPages(page: Page): Promise<number> {
   const totalRecords = await getTotalRecords(page);
 
-  if (totalRecords === 0) return 1;
+  if (totalRecords === 0) return 0;
 
   const totalPages = Math.ceil(totalRecords / ROWS_PER_PAGE);
 

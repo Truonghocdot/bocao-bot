@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class ScraperService
 {
     protected string $baseUrl;
+
     protected const MAX_ERROR_MESSAGE_LENGTH = 500;
 
     public function __construct()
@@ -96,24 +98,57 @@ class ScraperService
 
     protected function estimateTotalPages(?string $fromDate = null, ?string $toDate = null): int
     {
-        $response = Http::timeout((int) config('services.scraper.min_timeout', 180))
-            ->post($this->baseUrl, array_filter([
+        return (int) $this->inspect($fromDate, $toDate)['totalPages'];
+    }
+
+    /**
+     * @return array{totalRecords: int, totalPages: int}
+     */
+    public function inspect(?string $fromDate = null, ?string $toDate = null): array
+    {
+        $response = Http::timeout(max(
+            (int) config('services.scraper.min_timeout', 180),
+            (int) config('services.scraper.inspect_timeout', 360)
+        ))
+            ->post($this->endpoint('inspect'), array_filter([
                 'fromDate' => $fromDate,
                 'toDate' => $toDate,
-                'estimateOnly' => true,
             ], fn ($value) => $value !== null && $value !== ''));
 
-        if (! $response->successful() || ! $response->json('success')) {
-            throw new \RuntimeException('Estimate request failed.');
-        }
+        $data = $this->successfulDataOrFail($response, 'Scraper inspect');
 
-        $totalPages = (int) $response->json('data.totalPages', 0);
+        return [
+            'totalRecords' => max(0, (int) ($data['totalRecords'] ?? 0)),
+            'totalPages' => max(0, (int) ($data['totalPages'] ?? 0)),
+        ];
+    }
 
-        if ($totalPages < 1) {
-            throw new \RuntimeException('Estimate request returned invalid totalPages.');
-        }
+    /**
+     * @return array<string, mixed>
+     */
+    public function download(
+        ?string $fromDate,
+        ?string $toDate,
+        ?int $limit,
+        string $downloadKey
+    ): array {
+        $timeEstimate = $this->buildTimeEstimate($limit);
+        $timeout = $timeEstimate['timeout_seconds'];
 
-        return $totalPages;
+        Log::info("Sending snapshot download request to scraper API: {$this->baseUrl}", [
+            'limit' => $limit ?? 'all',
+            'timeout' => $timeout,
+            'download_key' => $downloadKey,
+        ]);
+
+        $response = Http::timeout($timeout)->post($this->endpoint('download'), array_filter([
+            'fromDate' => $fromDate,
+            'toDate' => $toDate,
+            'limit' => $limit,
+            'downloadKey' => $downloadKey,
+        ], fn ($value) => $value !== null && $value !== ''));
+
+        return $this->successfulDataOrFail($response, 'Scraper download');
     }
 
     /**
@@ -121,40 +156,44 @@ class ScraperService
      */
     public function runScrape(?string $fromDate = null, ?string $toDate = null, ?int $limit = null, ?string $downloadKey = null): array
     {
-        $timeEstimate = $this->estimateRunTimeForDateRange($fromDate, $toDate, $limit);
-        $timeout = $timeEstimate['timeout_seconds'];
+        return $this->download(
+            $fromDate,
+            $toDate,
+            $limit,
+            $downloadKey ?: now()->format('Ymd-His').'-legacy'
+        );
+    }
 
-        Log::info("Sending request to scraper API: {$this->baseUrl}", [
-            'limit'   => $limit ?? 'all',
-            'timeout' => $timeout,
-            'time_estimate' => $timeEstimate,
-        ]);
+    protected function endpoint(string $operation): string
+    {
+        return rtrim($this->baseUrl, '/').'/'.$operation;
+    }
 
-        $payload = [];
-        if ($fromDate)    $payload['fromDate']    = $fromDate;
-        if ($toDate)      $payload['toDate']      = $toDate;
-        if ($limit)       $payload['limit']       = $limit;
-        if ($downloadKey) $payload['downloadKey'] = $downloadKey;
-
-        $response = Http::timeout($timeout)->post($this->baseUrl, $payload);
-
+    /**
+     * @return array<string, mixed>
+     */
+    protected function successfulDataOrFail(Response $response, string $operation): array
+    {
         if ($response->successful() && $response->json('success')) {
-            return $response->json('data');
+            return (array) $response->json('data', []);
         }
 
-        // 409 = scraper đang bận xử lý job khác
         if ($response->status() === 409) {
-            throw new \Exception('SCRAPER_BUSY: ' . $response->json('message', 'Scraper is already running.'));
+            throw new \RuntimeException('SCRAPER_BUSY: '.$response->json('message', 'Scraper is already running.'));
         }
 
-        Log::error('Scraper API failed: ' . $response->body());
         $errorMessage = (string) $response->json('message', 'Unknown error');
         $errorMessage = preg_replace('/\s+/', ' ', $errorMessage) ?? 'Unknown error';
 
         if (strlen($errorMessage) > self::MAX_ERROR_MESSAGE_LENGTH) {
-            $errorMessage = substr($errorMessage, 0, self::MAX_ERROR_MESSAGE_LENGTH) . '...';
+            $errorMessage = substr($errorMessage, 0, self::MAX_ERROR_MESSAGE_LENGTH).'...';
         }
 
-        throw new \Exception('Scraper API returned an error: ' . $errorMessage);
+        Log::error("{$operation} failed", [
+            'status' => $response->status(),
+            'message' => $errorMessage,
+        ]);
+
+        throw new \RuntimeException("{$operation} returned an error: {$errorMessage}");
     }
 }

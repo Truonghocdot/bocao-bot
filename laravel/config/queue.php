@@ -44,6 +44,24 @@ return [
             'after_commit' => false,
         ],
 
+        'database-scrape' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION'),
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => 'scrape',
+            'retry_after' => (int) env('DB_SCRAPE_QUEUE_RETRY_AFTER', 14500),
+            'after_commit' => true,
+        ],
+
+        'database-delivery' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION'),
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => 'telegram-delivery',
+            'retry_after' => (int) env('DB_DELIVERY_QUEUE_RETRY_AFTER', 1300),
+            'after_commit' => true,
+        ],
+
         'beanstalkd' => [
             'driver' => 'beanstalkd',
             'host' => env('BEANSTALKD_QUEUE_HOST', 'localhost'),

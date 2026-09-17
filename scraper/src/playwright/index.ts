@@ -11,6 +11,7 @@ import {
 } from "../services/extract.service.js";
 import { solveCaptcha } from "../captcha/index.js";
 import { downloadCurrentPagePdfsByClick } from "../download/index.js";
+import type { DownloadedPdf } from "../download/index.js";
 import { generateDownloadDir } from "../utils/date.js";
 import {
   DKKD_EMPTY_RESULT_CODE,
@@ -32,7 +33,8 @@ export interface ScrapePayload {
 export interface ScrapeResult {
   downloaded: number;
   downloadDir?: string;
-  files?: string[];
+  files?: DownloadedPdf[];
+  expectedFiles?: number;
   dryRun?: boolean;
   preview?: RowDetail[];
   totalPages?: number;
@@ -51,8 +53,8 @@ async function downloadResultsPageByPage(
   page: Awaited<ReturnType<typeof createPage>>,
   limit: number | undefined,
   downloadDir: string
-): Promise<string[]> {
-  const downloadedFiles: string[] = [];
+): Promise<{ files: DownloadedPdf[]; expectedFiles: number }> {
+  const downloadedFiles: DownloadedPdf[] = [];
   const totalRecords = await getTotalRecords(page);
   const siteTotalPages = Math.max(1, Math.ceil(totalRecords / 20));
   let totalPages = siteTotalPages;
@@ -125,17 +127,25 @@ async function downloadResultsPageByPage(
     console.log(`📦 Accumulated downloaded files: ${downloadedFiles.length}`);
   }
 
-  return downloadedFiles;
+  return {
+    files: downloadedFiles,
+    expectedFiles: processedRows,
+  };
 }
 
 export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> {
-  const downloadDir = generateDownloadDir(payload.downloadKey);
-  const absoluteDownloadDir = path.resolve(downloadDir);
-  const errorDir = path.join(downloadDir, "errors");
+  const shouldCreateDownloadDir = !payload.dryRun && !payload.estimateOnly;
+  const downloadDir = shouldCreateDownloadDir
+    ? generateDownloadDir(payload.downloadKey)
+    : "";
+  const absoluteDownloadDir = downloadDir ? path.resolve(downloadDir) : undefined;
+  const errorDir = downloadDir
+    ? path.join(downloadDir, "errors")
+    : path.resolve(process.cwd(), "..", "laravel", "storage", "logs", "scraper-errors");
   const MAX_RETRIES = 3;
 
   // Chỉ tạo thư mục nếu không phải dryRun
-  if (!payload.dryRun) {
+  if (shouldCreateDownloadDir) {
     fs.mkdirSync(downloadDir, { recursive: true });
   }
 
@@ -148,7 +158,10 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     await fillSearchForm(page, payload.fromDate, payload.toDate);
 
     let allItems: RowDetail[] = [];
-    let downloadedPaths: string[] = [];
+    let downloadedResult: { files: DownloadedPdf[]; expectedFiles: number } = {
+      files: [],
+      expectedFiles: 0,
+    };
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       console.log(`🤖 Solving captcha... (attempt ${attempt}/${MAX_RETRIES})`);
@@ -171,6 +184,10 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
           continue;
         }
 
+        if (payload.estimateOnly) {
+          return { downloaded: 0, totalPages: 0, totalRecords: 0 };
+        }
+
         throw makeDkkdEmptyResultError();
       }
 
@@ -188,6 +205,10 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
           continue;
         }
 
+        if (payload.estimateOnly) {
+          return { downloaded: 0, totalPages: 0, totalRecords: 0 };
+        }
+
         throw makeDkkdEmptyResultError();
       }
 
@@ -197,7 +218,6 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
 
         return {
           downloaded: 0,
-          downloadDir: absoluteDownloadDir,
           totalPages,
           totalRecords,
         };
@@ -208,7 +228,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
         allItems = await collectAllRows(page, payload.limit);
       } else {
         // Full-run tải từng page ngay sau khi extract để tránh stale ASP.NET state.
-        downloadedPaths = await downloadResultsPageByPage(
+        downloadedResult = await downloadResultsPageByPage(
           page,
           payload.limit,
           downloadDir
@@ -244,13 +264,24 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     /* ----------------------------------------------------------------
      | FULL RUN — Tải PDF
      * -------------------------------------------------------------- */
-    const downloadedFiles = downloadedPaths
-      .map((file) => path.resolve(file))
-      .sort();
+    const downloadedFiles = downloadedResult.files
+      .map((file) => ({ ...file, path: path.resolve(file.path) }))
+      .sort((left, right) => left.globalIndex - right.globalIndex);
+
+    if (downloadedFiles.length !== downloadedResult.expectedFiles) {
+      throw new Error(
+        `INCOMPLETE_DOWNLOAD: downloaded ${downloadedFiles.length}/${downloadedResult.expectedFiles} PDF files.`
+      );
+    }
 
     if (downloadedFiles.length === 0) {
       console.log("📭 Không có file PDF nào được tải.");
-      return { downloaded: 0, downloadDir: absoluteDownloadDir };
+      return {
+        downloaded: 0,
+        downloadDir: absoluteDownloadDir,
+        expectedFiles: downloadedResult.expectedFiles,
+        files: [],
+      };
     }
 
     console.log("🎉 DONE");
@@ -263,6 +294,7 @@ export async function scrapeDKKD(payload: ScrapePayload): Promise<ScrapeResult> 
     return {
       downloaded: downloadedFiles.length,
       downloadDir: absoluteDownloadDir,
+      expectedFiles: downloadedResult.expectedFiles,
       files: downloadedFiles,
     };
   } catch (error: any) {

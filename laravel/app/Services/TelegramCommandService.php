@@ -2,11 +2,11 @@
 
 namespace App\Services;
 
-use App\Models\TelegramChat;
+use App\Jobs\RunScraperJob;
 use App\Models\ScrapeJob;
 use App\Models\ScrapeSchedule;
+use App\Models\TelegramChat;
 use App\Models\TelegramUser;
-use App\Jobs\RunScraperJob;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Laravel\Facades\Telegram;
 
@@ -22,7 +22,9 @@ class TelegramCommandService
     ];
 
     protected TelegramLogService $logService;
+
     protected ConversationService $conversation;
+
     protected ScraperService $scraperService;
 
     public function __construct(
@@ -30,7 +32,7 @@ class TelegramCommandService
         ConversationService $conversation,
         ScraperService $scraperService
     ) {
-        $this->logService   = $logService;
+        $this->logService = $logService;
         $this->conversation = $conversation;
         $this->scraperService = $scraperService;
     }
@@ -44,29 +46,34 @@ class TelegramCommandService
             $state = $this->conversation->getState($chatId);
 
             if ($this->requiresAuthentication($chatId)) {
-                if ($state === 'await_auth_password' && !str_starts_with($text, '/')) {
+                if ($state === 'await_auth_password' && ! str_starts_with($text, '/')) {
                     $this->onAuthPasswordInput($chatId, $text);
+
                     return;
                 }
 
                 if (str_starts_with($text, '/cancel')) {
                     $this->conversation->clear($chatId);
-                    $this->send($chatId, "↩️ Đã huỷ. Gõ /start để nhập mật khẩu.");
+                    $this->send($chatId, '↩️ Đã huỷ. Gõ /start để nhập mật khẩu.');
+
                     return;
                 }
 
                 if (! str_starts_with($text, '/')) {
                     $this->onAuthPasswordInput($chatId, $text);
+
                     return;
                 }
 
                 $this->promptForPassword($chatId);
+
                 return;
             }
 
             // Người dùng đang trong luồng hội thoại và nhập text thường (không phải lệnh)
-            if ($state && !str_starts_with($text, '/')) {
+            if ($state && ! str_starts_with($text, '/')) {
                 $this->handleConversationInput($chatId, $state, $text);
+
                 return;
             }
 
@@ -74,21 +81,23 @@ class TelegramCommandService
             if (str_starts_with($text, '/cancel')) {
                 if ($this->isScheduleConversationState($state)) {
                     $this->cancelScheduleSetup($chatId);
+
                     return;
                 }
 
                 $this->conversation->clear($chatId);
-                $this->send($chatId, "↩️ Đã huỷ. Gõ /start để xem các lệnh.");
+                $this->send($chatId, '↩️ Đã huỷ. Gõ /start để xem các lệnh.');
+
                 return;
             }
 
             match (true) {
-                str_starts_with($text, '/start')    => $this->handleStart($chatId),
-                str_starts_with($text, '/run')      => $this->handleRun($chatId),
-                str_starts_with($text, '/stop')     => $this->handleStop($chatId),
-                str_starts_with($text, '/status')   => $this->handleStatus($chatId),
+                str_starts_with($text, '/start') => $this->handleStart($chatId),
+                str_starts_with($text, '/run') => $this->handleRun($chatId),
+                str_starts_with($text, '/stop') => $this->handleStop($chatId),
+                str_starts_with($text, '/status') => $this->handleStatus($chatId),
                 str_starts_with($text, '/schedule') => $this->handleSchedule($chatId),
-                default                             => $this->handleUnknown($chatId, $text),
+                default => $this->handleUnknown($chatId, $text),
             };
         } catch (\Throwable $e) {
             $this->logService->logException($e, $chatId, 'Command Handler');
@@ -102,14 +111,14 @@ class TelegramCommandService
     {
         match ($state) {
             'await_auth_password' => $this->onAuthPasswordInput($chatId, $input),
-            'await_date_run'       => $this->onRunDateInput($chatId, $input),
-            'await_pages_run'      => $this->onRunPagesInput($chatId, $input),
-            'await_target_run'     => $this->onRunTargetInput($chatId, $input),
-            'await_time_schedule'  => $this->onScheduleTimeInput($chatId, $input),
-            'await_date_schedule'  => $this->onScheduleDateInput($chatId, $input),
+            'await_date_run' => $this->onRunDateInput($chatId, $input),
+            'await_pages_run' => $this->onRunPagesInput($chatId, $input),
+            'await_target_run' => $this->onRunTargetInput($chatId, $input),
+            'await_time_schedule' => $this->onScheduleTimeInput($chatId, $input),
+            'await_date_schedule' => $this->onScheduleDateInput($chatId, $input),
             'await_pages_schedule' => $this->onSchedulePagesInput($chatId, $input),
             'await_target_schedule' => $this->onScheduleTargetInput($chatId, $input),
-            default                => $this->conversation->clear($chatId),
+            default => $this->conversation->clear($chatId),
         };
     }
 
@@ -122,17 +131,18 @@ class TelegramCommandService
 
         if ($this->requiresAuthentication($chatId)) {
             $this->promptForPassword($chatId);
+
             return;
         }
 
-        $this->send($chatId, <<<TXT
+        $this->send($chatId, <<<'TXT'
         👋 *Bot DKKD Scraper* đã sẵn sàng!
 
         📌 *Các lệnh:*
         /run — Chạy cào dữ liệu ngay
         /schedule — Lên lịch chạy tự động
         /status — Xem trạng thái hệ thống
-        /stop — Dừng tiến trình đang chạy
+        /stop — Dừng lượt nhận file hiện tại
         /cancel — Huỷ thao tác đang nhập
         TXT);
     }
@@ -141,7 +151,7 @@ class TelegramCommandService
     {
         $this->conversation->transition($chatId, 'await_auth_password');
 
-        $this->send($chatId, <<<TXT
+        $this->send($chatId, <<<'TXT'
         🔐 *Yêu cầu xác thực*
 
         Vui lòng nhập mật khẩu để sử dụng bot.
@@ -153,7 +163,8 @@ class TelegramCommandService
     {
         if (! $this->isCorrectAccessPassword($input)) {
             $this->conversation->transition($chatId, 'await_auth_password');
-            $this->send($chatId, "❌ Mật khẩu không đúng. Vui lòng nhập lại hoặc /cancel để huỷ.");
+            $this->send($chatId, '❌ Mật khẩu không đúng. Vui lòng nhập lại hoặc /cancel để huỷ.');
+
             return;
         }
 
@@ -164,14 +175,14 @@ class TelegramCommandService
 
         $this->conversation->clear($chatId);
 
-        $this->send($chatId, <<<TXT
+        $this->send($chatId, <<<'TXT'
         ✅ Xác thực thành công.
 
         📌 *Các lệnh:*
         /run — Chạy cào dữ liệu ngay
         /schedule — Lên lịch chạy tự động
         /status — Xem trạng thái hệ thống
-        /stop — Dừng tiến trình đang chạy
+        /stop — Dừng lượt nhận file hiện tại
         /cancel — Huỷ thao tác đang nhập
         TXT);
     }
@@ -181,28 +192,20 @@ class TelegramCommandService
      * ================================================================= */
     protected function handleRun(string $chatId): void
     {
-        // Check global — scraper chỉ xử lý được 1 job tại một thời điểm
+        // Một chat chỉ có một yêu cầu đang hoạt động; chat khác vẫn có thể xếp hàng.
         $myJob = ScrapeJob::where('chat_id', $chatId)
-            ->whereIn('status', ['pending', 'processing', 'delivering'])
+            ->whereIn('status', ['pending', 'processing', 'waiting_snapshot', 'delivering'])
             ->exists();
 
         if ($myJob) {
-            $this->send($chatId, "⚠️ Bạn đang có tiến trình chạy. Dùng /stop để dừng trước, hoặc /status để kiểm tra.");
-            return;
-        }
+            $this->send($chatId, '⚠️ Bạn đang có tiến trình chạy. Dùng /stop để dừng trước, hoặc /status để kiểm tra.');
 
-        $otherJob = ScrapeJob::where('chat_id', '!=', $chatId)
-            ->whereIn('status', ['pending', 'processing', 'delivering'])
-            ->exists();
-
-        if ($otherJob) {
-            $this->send($chatId, "⏳ Hệ thống đang xử lý một yêu cầu khác. Vui lòng thử lại sau ít phút.");
             return;
         }
 
         $this->conversation->transition($chatId, 'await_date_run');
 
-        $today     = now()->format('d/m/Y');
+        $today = now()->format('d/m/Y');
         $yesterday = now()->subDay()->format('d/m/Y');
 
         $this->send($chatId, <<<TXT
@@ -220,14 +223,15 @@ class TelegramCommandService
     {
         $parsed = $this->parseDateRange($input);
 
-        if (!$parsed) {
-            $today     = now()->format('d/m/Y');
+        if (! $parsed) {
+            $today = now()->format('d/m/Y');
             $yesterday = now()->subDay()->format('d/m/Y');
             $this->send($chatId, <<<TXT
             ❌ Định dạng không hợp lệ.
             Vui lòng nhập theo dạng: `dd/mm/yyyy - dd/mm/yyyy`
             Ví dụ: `{$yesterday} - {$today}`
             TXT);
+
             return;
         }
 
@@ -235,7 +239,7 @@ class TelegramCommandService
 
         $this->conversation->transition($chatId, 'await_pages_run', [
             'from_date' => $fromDate,
-            'to_date'   => $toDate,
+            'to_date' => $toDate,
         ]);
 
         $this->send($chatId, <<<TXT
@@ -261,7 +265,7 @@ class TelegramCommandService
             'limit_label' => $limitLabel,
         ]);
 
-        $this->send($chatId, <<<TXT
+        $this->send($chatId, <<<'TXT'
         📤 *Bạn muốn gửi file PDF tới đâu?*
 
         Nhập một hoặc nhiều đích, ngăn cách bằng dấu phẩy, chấm phẩy hoặc xuống dòng:
@@ -287,6 +291,7 @@ class TelegramCommandService
 
         if (empty($targets) || ! empty($targetResolution['invalid'])) {
             $this->send($chatId, $this->buildTargetChatResolutionError($targetResolution['invalid']));
+
             return;
         }
 
@@ -295,24 +300,16 @@ class TelegramCommandService
         $this->conversation->clear($chatId);
 
         $job = ScrapeJob::create([
-            'chat_id'     => $chatId,
+            'chat_id' => $chatId,
             'target_chat_id' => $targetChatIds[0],
             'target_chat_ids' => $targetChatIds,
-            'status'      => 'pending',
-            'from_date'   => $session['from_date'],
-            'to_date'     => $session['to_date'],
+            'status' => 'pending',
+            'from_date' => $session['from_date'],
+            'to_date' => $session['to_date'],
             'max_records' => $session['max_records'],
         ]);
 
-        $job->update([
-            'download_key' => $this->makeDownloadKey($job),
-        ]);
-
-        $timeEstimate = $this->scraperService->estimateRunTimeForDateRange(
-            $session['from_date'],
-            $session['to_date'],
-            $session['max_records']
-        );
+        $timeEstimate = $this->scraperService->estimateRunTime($session['max_records']);
         $estimatedDuration = $this->formatEstimatedDuration($timeEstimate);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
         $targetWarning = $this->formatTargetWarnings($targets);
@@ -341,11 +338,11 @@ class TelegramCommandService
         $schedule = ScrapeSchedule::where('chat_id', $chatId)->first();
 
         if ($schedule) {
-            $limitLabel   = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
+            $limitLabel = $schedule->max_records ? $schedule->max_records.' trang' : 'Tất cả';
             $targetChatIds = $schedule->target_chat_ids ?: [$schedule->target_chat_id ?: $chatId];
-            $icon         = $schedule->is_active ? '✅' : '❌';
-            $status       = $schedule->is_active ? 'BẬT' : 'TẮT';
-            $dateRange    = ($schedule->from_date && $schedule->to_date)
+            $icon = $schedule->is_active ? '✅' : '❌';
+            $status = $schedule->is_active ? 'BẬT' : 'TẮT';
+            $dateRange = ($schedule->from_date && $schedule->to_date)
                 ? "`{$schedule->from_date}` → `{$schedule->to_date}`"
                 : '_Chưa cấu hình_';
 
@@ -365,12 +362,13 @@ class TelegramCommandService
             TXT);
 
             $this->conversation->transition($chatId, 'await_time_schedule');
+
             return;
         }
 
         // Chưa có lịch → bắt đầu thiết lập
         $this->conversation->transition($chatId, 'await_time_schedule');
-        $this->send($chatId, <<<TXT
+        $this->send($chatId, <<<'TXT'
         🗓 *Cài đặt lịch chạy tự động*
 
         Bot sẽ tạo *một lịch chạy một lần* cho job cào dữ liệu DKKD và gửi file PDF về tài khoản bạn chỉ định.
@@ -395,25 +393,28 @@ class TelegramCommandService
         if (in_array($lower, ['toggle', 'bật', 'tắt', 'on', 'off'])) {
             $schedule = ScrapeSchedule::where('chat_id', $chatId)->first();
             if ($schedule) {
-                $schedule->update(['is_active' => !$schedule->is_active]);
+                $schedule->update(['is_active' => ! $schedule->is_active]);
                 $status = $schedule->is_active ? '✅ BẬT' : '❌ TẮT';
                 $this->conversation->clear($chatId);
                 $this->send($chatId, "Lịch tự động: *{$status}*");
             }
+
             return;
         }
 
         // Parse HH:mm
-        if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim($input), $matches)) {
-            $this->send($chatId, "❌ Định dạng không hợp lệ. Vui lòng nhập theo dạng `HH:mm`, ví dụ: `07:00`");
+        if (! preg_match('/^(\d{1,2}):(\d{2})$/', trim($input), $matches)) {
+            $this->send($chatId, '❌ Định dạng không hợp lệ. Vui lòng nhập theo dạng `HH:mm`, ví dụ: `07:00`');
+
             return;
         }
 
-        $hour   = (int) $matches[1];
+        $hour = (int) $matches[1];
         $minute = (int) $matches[2];
 
         if ($hour > 23 || $minute > 59) {
-            $this->send($chatId, "❌ Giờ không hợp lệ. Vui lòng nhập lại, ví dụ: `07:00`");
+            $this->send($chatId, '❌ Giờ không hợp lệ. Vui lòng nhập lại, ví dụ: `07:00`');
+
             return;
         }
 
@@ -441,11 +442,12 @@ class TelegramCommandService
         $parsed = $this->parseDateRange($input);
 
         if (! $parsed) {
-            $this->send($chatId, <<<TXT
+            $this->send($chatId, <<<'TXT'
             ❌ Định dạng không hợp lệ.
             Vui lòng nhập theo dạng: `dd/mm/yyyy - dd/mm/yyyy`
             Ví dụ: `01/05/2026 - 15/05/2026`
             TXT);
+
             return;
         }
 
@@ -517,6 +519,7 @@ class TelegramCommandService
 
         if (empty($targets) || ! empty($targetResolution['invalid'])) {
             $this->send($chatId, $this->buildTargetChatResolutionError($targetResolution['invalid']));
+
             return;
         }
 
@@ -528,22 +531,18 @@ class TelegramCommandService
         ScrapeSchedule::updateOrCreate(
             ['chat_id' => $chatId],
             [
-                'target_chat_id'  => $targetChatIds[0],
+                'target_chat_id' => $targetChatIds[0],
                 'target_chat_ids' => $targetChatIds,
-                'from_date'       => $session['from_date'],
-                'to_date'         => $session['to_date'],
+                'from_date' => $session['from_date'],
+                'to_date' => $session['to_date'],
                 'cron_expression' => $session['cron'],
-                'days_back'       => 1,
-                'max_records'     => $session['max_records'],
-                'is_active'       => true,
+                'days_back' => 1,
+                'max_records' => $session['max_records'],
+                'is_active' => true,
             ]
         );
 
-        $timeEstimate = $this->scraperService->estimateRunTimeForDateRange(
-            $session['from_date'],
-            $session['to_date'],
-            $session['max_records']
-        );
+        $timeEstimate = $this->scraperService->estimateRunTime($session['max_records']);
         $estimatedFiles = $this->formatEstimatedFiles($timeEstimate);
         $targetWarning = $this->formatTargetWarnings($targets);
         $targetLabels = $this->formatTargetLabels($targets);
@@ -571,36 +570,43 @@ class TelegramCommandService
         $schedule = ScrapeSchedule::where('chat_id', $chatId)->first();
 
         if ($schedule) {
-            $limitLabel  = $schedule->max_records ? $schedule->max_records . ' trang' : 'Tất cả';
-            $icon        = $schedule->is_active ? '✅' : '❌';
-            $status      = $schedule->is_active ? 'BẬT' : 'TẮT';
+            $limitLabel = $schedule->max_records ? $schedule->max_records.' trang' : 'Tất cả';
+            $icon = $schedule->is_active ? '✅' : '❌';
+            $status = $schedule->is_active ? 'BẬT' : 'TẮT';
             $targetChatIds = $schedule->target_chat_ids ?: [$schedule->target_chat_id ?: $chatId];
             $rangeLabel = ($schedule->from_date && $schedule->to_date)
                 ? "{$schedule->from_date}→{$schedule->to_date}"
                 : 'chưa có range';
             $scheduleText = "{$icon} *{$status}* — `{$schedule->cron_expression}` · `{$rangeLabel}` · {$limitLabel} · gửi {$this->formatChatTargetLabels($targetChatIds)}";
         } else {
-            $scheduleText = "_Chưa cấu hình — dùng /schedule_";
+            $scheduleText = '_Chưa cấu hình — dùng /schedule_';
         }
 
         $jobs = ScrapeJob::where('chat_id', $chatId)->latest()->take(5)->get();
 
         $emoji = [
-            'pending'    => '🕐',
+            'pending' => '🕐',
             'processing' => '⚙️',
+            'waiting_snapshot' => '🔎',
             'delivering' => '📤',
-            'completed'  => '✅',
-            'failed'     => '❌',
-            'stopped'    => '🛑',
+            'completed' => '✅',
+            'completed_with_errors' => '⚠️',
+            'failed' => '❌',
+            'stopped' => '🛑',
         ];
 
         $historyText = $jobs->isEmpty()
-            ? "_Chưa có lần chạy nào._"
+            ? '_Chưa có lần chạy nào._'
             : $jobs->map(function ($job) use ($emoji) {
-                $icon  = $emoji[$job->status] ?? '❓';
-                $time  = $job->created_at->format('d/m H:i');
+                $icon = $emoji[$job->status] ?? '❓';
+                $time = $job->created_at->format('d/m H:i');
                 $range = $job->from_date ? " `{$job->from_date}→{$job->to_date}`" : '';
-                $extra = in_array($job->status, ['delivering', 'completed'], true) ? " · {$job->downloaded_count} bản" : '';
+                $targetCount = count($job->target_chat_ids ?: [$job->target_chat_id ?: $job->chat_id]);
+                $expectedSends = $job->downloaded_count * max(1, $targetCount);
+                $extra = in_array($job->status, ['delivering', 'completed', 'completed_with_errors', 'stopped'], true)
+                    ? " · {$job->sent_count}/{$expectedSends} lượt gửi · {$job->failed_count} lỗi"
+                    : '';
+
                 return "{$icon} {$time}{$range}{$extra}";
             })->implode("\n");
 
@@ -620,16 +626,17 @@ class TelegramCommandService
     protected function handleStop(string $chatId): void
     {
         $activeJob = ScrapeJob::where('chat_id', $chatId)
-            ->whereIn('status', ['pending', 'processing', 'delivering'])
+            ->whereIn('status', ['pending', 'processing', 'waiting_snapshot', 'delivering'])
             ->latest()->first();
 
-        if (!$activeJob) {
-            $this->send($chatId, "ℹ️ Không có tiến trình nào đang chạy.");
+        if (! $activeJob) {
+            $this->send($chatId, 'ℹ️ Không có tiến trình nào đang chạy.');
+
             return;
         }
 
         $activeJob->update(['status' => 'stopped']);
-        $this->send($chatId, "🛑 *Đã yêu cầu dừng.*\nBot sẽ gửi các file PDF đã tải được.");
+        $this->send($chatId, "🛑 *Đã dừng lượt nhận file của bạn.*\nSnapshot dùng chung vẫn tiếp tục nếu người khác đang chờ.");
     }
 
     /* ===================================================================
@@ -637,8 +644,10 @@ class TelegramCommandService
      * ================================================================= */
     protected function handleUnknown(string $chatId, string $text): void
     {
-        if (empty($text)) return;
-        $this->send($chatId, "❓ Lệnh không được nhận dạng. Gõ /start để xem danh sách lệnh.");
+        if (empty($text)) {
+            return;
+        }
+        $this->send($chatId, '❓ Lệnh không được nhận dạng. Gõ /start để xem danh sách lệnh.');
     }
 
     protected function isScheduleConversationState(?string $state): bool
@@ -660,8 +669,8 @@ class TelegramCommandService
         $this->send(
             $chatId,
             $deleted
-                ? "↩️ Đã huỷ thiết lập và xoá lịch tự động hiện tại."
-                : "↩️ Đã huỷ thiết lập lịch tự động."
+                ? '↩️ Đã huỷ thiết lập và xoá lịch tự động hiện tại.'
+                : '↩️ Đã huỷ thiết lập lịch tự động.'
         );
     }
 
@@ -700,11 +709,15 @@ class TelegramCommandService
         // Hỗ trợ các dấu phân cách: " - ", " to ", " → "
         $parts = preg_split('/\s*(-|to|→)\s*/u', trim($input), 2);
 
-        if (count($parts) !== 2) return null;
+        if (count($parts) !== 2) {
+            return null;
+        }
 
         [$from, $to] = array_map('trim', $parts);
 
-        if (!$this->isValidDate($from) || !$this->isValidDate($to)) return null;
+        if (! $this->isValidDate($from) || ! $this->isValidDate($to)) {
+            return null;
+        }
 
         return [$from, $to];
     }
@@ -716,6 +729,7 @@ class TelegramCommandService
 
     /**
      * Parse số trang: "0" / "tất cả" / "all" → null; số dương → int
+     *
      * @return array{0: int|null, 1: string}
      */
     protected function parsePages(string $input): array
@@ -727,6 +741,7 @@ class TelegramCommandService
         }
 
         $n = (int) $input;
+
         return [$n > 0 ? $n : null, $n > 0 ? "{$n} trang" : 'Tất cả'];
     }
 
@@ -772,7 +787,7 @@ class TelegramCommandService
             ];
         }
 
-        if (!preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
+        if (! preg_match('/^@[A-Za-z0-9_]{5,32}$/', $trimmed)) {
             return null;
         }
 
@@ -780,7 +795,7 @@ class TelegramCommandService
         if ($user) {
             return [
                 'chat_id' => $user->chat_id,
-                'label' => '@' . ltrim($trimmed, '@'),
+                'label' => '@'.ltrim($trimmed, '@'),
                 'type' => 'private',
             ];
         }
@@ -826,6 +841,7 @@ class TelegramCommandService
 
             if ($target === null) {
                 $invalid[] = $targetInput;
+
                 continue;
             }
 
@@ -840,7 +856,7 @@ class TelegramCommandService
 
     protected function buildTargetChatResolutionError(array $invalid): string
     {
-        $invalidLabel = empty($invalid) ? '' : ': `' . implode('`, `', $invalid) . '`';
+        $invalidLabel = empty($invalid) ? '' : ': `'.implode('`, `', $invalid).'`';
 
         return "❌ Không nhận diện được đích nhận{$invalidLabel}.\nVui lòng nhập `@username` hoặc `chat_id` do bot gửi file trả về, cách nhau bằng dấu phẩy, chấm phẩy hoặc xuống dòng.";
     }
@@ -852,7 +868,7 @@ class TelegramCommandService
             $targets
         ))));
 
-        return empty($warnings) ? '' : "\n⚠️ " . implode("\n⚠️ ", $warnings);
+        return empty($warnings) ? '' : "\n⚠️ ".implode("\n⚠️ ", $warnings);
     }
 
     protected function formatChatTargetLabel(?string $chatId): string
@@ -864,13 +880,13 @@ class TelegramCommandService
         $chat = TelegramChat::where('chat_id', $chatId)->first();
 
         if ($chat) {
-            return '*' . $chat->displayLabel() . '*';
+            return '*'.$chat->displayLabel().'*';
         }
 
         $user = TelegramUser::where('chat_id', $chatId)->first();
 
         if ($user && $user->username) {
-            return '*@' . $user->username . '*';
+            return '*@'.$user->username.'*';
         }
 
         if (str_starts_with($chatId, '@')) {
@@ -891,14 +907,9 @@ class TelegramCommandService
     protected function formatTargetLabels(array $targets): string
     {
         return implode(', ', array_map(
-            static fn (array $target) => '*' . $target['label'] . '*',
+            static fn (array $target) => '*'.$target['label'].'*',
             $targets
         ));
-    }
-
-    protected function makeDownloadKey(ScrapeJob $job): string
-    {
-        return now()->format('Ymd-His') . "-job-{$job->id}";
     }
 
     protected function formatEstimatedDuration(array $estimate): string
@@ -907,22 +918,22 @@ class TelegramCommandService
         $prefix = ($estimate['mode'] ?? null) === 'all' ? 'tối đa khoảng ' : 'khoảng ';
 
         if ($seconds < 60) {
-            return $prefix . "{$seconds} giây";
+            return $prefix."{$seconds} giây";
         }
 
         $minutes = (int) ceil($seconds / 60);
         if ($minutes < 60) {
-            return $prefix . "{$minutes} phút";
+            return $prefix."{$minutes} phút";
         }
 
         $hours = intdiv($minutes, 60);
         $remainingMinutes = $minutes % 60;
 
         if ($remainingMinutes === 0) {
-            return $prefix . "{$hours} giờ";
+            return $prefix."{$hours} giờ";
         }
 
-        return $prefix . "{$hours} giờ {$remainingMinutes} phút";
+        return $prefix."{$hours} giờ {$remainingMinutes} phút";
     }
 
     protected function formatEstimatedFiles(array $estimate): string
@@ -933,7 +944,7 @@ class TelegramCommandService
             return 'chưa xác định';
         }
 
-        return number_format((int) $files, 0, ',', '.') . ' file';
+        return number_format((int) $files, 0, ',', '.').' file';
     }
 
     /**

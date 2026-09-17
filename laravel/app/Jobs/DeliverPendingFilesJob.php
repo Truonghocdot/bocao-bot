@@ -10,155 +10,195 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Telegram\Bot\FileUpload\InputFile;
+use Illuminate\Support\Str;
 use Telegram\Bot\Laravel\Facades\Telegram;
 
-/**
- * Scan download_dir of a ScrapeJob and deliver all downloaded PDFs to Telegram.
- * Used both for the normal post-scrape delivery flow and failure recovery.
- */
 class DeliverPendingFilesJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    // Large Telegram batches can hit rate limits; keep this separate from scrape timeout.
-    public $timeout = 14400;
+    public int $timeout = 1200;
 
-    public $tries = 1;
+    public int $tries = 3;
 
-    protected ScrapeJob $jobRecord;
-
-    public function __construct(ScrapeJob $jobRecord)
+    public function __construct(protected ScrapeJob $jobRecord)
     {
-        $this->jobRecord = $jobRecord;
+        $this->onQueue('telegram-delivery');
     }
 
     public function handle(TelegramDeliveryService $deliveryService): void
     {
         $this->jobRecord->refresh();
 
-        if ($this->jobRecord->delivered_at !== null) {
-            Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: already delivered, skipping.");
+        if ($this->jobRecord->delivered_at !== null || $this->jobRecord->status === 'stopped') {
             return;
         }
 
-        $downloadDir = $this->jobRecord->download_dir;
+        $files = $this->filesForJob();
+        $targets = $this->targetChatIds();
 
-        if (! $downloadDir || ! is_dir($downloadDir)) {
-            Log::warning("DeliverPendingFilesJob #{$this->jobRecord->id}: download_dir không tồn tại — {$downloadDir}");
-            $this->markDeliveryUnavailable('download_dir không tồn tại');
+        if ($files === [] || $targets === []) {
+            $this->markDeliveryUnavailable('Không có file hoặc nơi nhận hợp lệ.');
+
             return;
         }
 
-        $files = glob(rtrim($downloadDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.pdf') ?: [];
-        sort($files);
+        $totalAttempts = count($files) * count($targets);
+        $cursor = min((int) $this->jobRecord->delivery_cursor, $totalAttempts);
+        $chunkSize = max(1, (int) config('services.telegram_delivery.chunk_size', 5));
+        $chunkEnd = min($cursor + $chunkSize, $totalAttempts);
 
-        if (empty($files)) {
-            Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: không có file PDF nào để gửi.");
-            $this->markDeliveryUnavailable('không có file PDF để gửi');
-            $this->notifySource("ℹ️ Không tìm thấy file PDF nào đã tải để gửi.");
+        if ($cursor === 0) {
+            $this->notifySource(
+                '📤 Bắt đầu gửi *'.count($files).'* PDF tới *'.count($targets).'* nơi nhận.'
+            );
+        }
+
+        for ($position = $cursor; $position < $chunkEnd; $position++) {
+            $this->jobRecord->refresh();
+            if ($this->jobRecord->status === 'stopped') {
+                return;
+            }
+
+            $fileIndex = intdiv($position, count($targets));
+            $targetIndex = $position % count($targets);
+            $file = $files[$fileIndex];
+            $target = $targets[$targetIndex];
+
+            try {
+                $this->deliverOne($file, $target, $targets, $deliveryService);
+                $this->jobRecord->increment('sent_count');
+                $deliveryService->pauseBetweenDocumentSends();
+            } catch (\Throwable $exception) {
+                $this->jobRecord->increment('failed_count');
+                $this->jobRecord->update([
+                    'delivery_error_message' => Str::limit($exception->getMessage(), 2000, '...'),
+                ]);
+                Log::warning('Telegram document delivery failed.', [
+                    'job_id' => $this->jobRecord->id,
+                    'target_chat_id' => $target,
+                    'filename' => basename($file),
+                    'error' => $exception->getMessage(),
+                ]);
+            } finally {
+                $this->jobRecord->update(['delivery_cursor' => $position + 1]);
+            }
+        }
+
+        $this->jobRecord->refresh();
+        if ((int) $this->jobRecord->delivery_cursor < $totalAttempts) {
+            self::dispatch($this->jobRecord)->delay(now()->addSecond());
+
             return;
         }
 
-        $targetChatIds = $this->targetChatIds();
-
-        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery started.", [
-            'files' => count($files),
-            'targets' => count($targetChatIds),
-            'download_dir' => $downloadDir,
-            'status' => $this->jobRecord->status,
+        $hasFailures = (int) $this->jobRecord->failed_count > 0;
+        $this->jobRecord->update([
+            'status' => $hasFailures ? 'completed_with_errors' : 'completed',
+            'delivered_at' => now(),
         ]);
 
-        $this->notifySource("📦 Tìm thấy *" . count($files) . "* file PDF đã tải. Đang gửi tới *" . count($targetChatIds) . "* nơi...");
-
-        $sent = $this->deliverFiles($files, $targetChatIds, $deliveryService);
-        $expectedSends = count($files) * count($targetChatIds);
-
-        $updates = [
-            'downloaded_count' => count($files),
-            'delivered_at'     => now(),
-        ];
-
-        if (! in_array($this->jobRecord->status, ['failed', 'stopped'], true)) {
-            $updates['status'] = 'completed';
-        }
-
-        $this->jobRecord->update($updates);
-
-        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: delivery completed.", [
-            'sent' => $sent,
-            'files' => count($files),
-            'targets' => count($targetChatIds),
-        ]);
-
-        $this->notifySource("✅ Đã gửi *{$sent}/{$expectedSends}* lượt gửi PDF.");
+        $this->notifySource(
+            $hasFailures
+                ? "⚠️ Đã gửi *{$this->jobRecord->sent_count}/{$totalAttempts}* lượt PDF; *{$this->jobRecord->failed_count}* lượt lỗi."
+                : "✅ Đã gửi đủ *{$this->jobRecord->sent_count}/{$totalAttempts}* lượt PDF."
+        );
     }
 
+    protected function deliverOne(
+        string $file,
+        string $targetChatId,
+        array $targetChatIds,
+        TelegramDeliveryService $deliveryService
+    ): void {
+        try {
+            $deliveryService->sendDocumentToTarget([
+                'chat_id' => $targetChatId,
+                'document_path' => $file,
+                'caption' => "PDF DKKD\n".basename($file),
+            ]);
+        } catch (\Throwable $exception) {
+            $message = mb_strtolower($exception->getMessage());
+            $targetUnavailable = str_contains($message, 'chat not found')
+                || str_contains($message, 'bot was blocked by the user')
+                || str_contains($message, 'user is deactivated');
+            $sourceChatId = (string) $this->jobRecord->chat_id;
+
+            if (
+                ! $targetUnavailable
+                || $targetChatId === $sourceChatId
+                || in_array($sourceChatId, $targetChatIds, true)
+            ) {
+                throw $exception;
+            }
+
+            $deliveryService->sendDocumentToSource([
+                'chat_id' => $sourceChatId,
+                'document_path' => $file,
+                'caption' => "PDF DKKD\n".basename($file),
+            ]);
+        }
+    }
+
+    /**
+     * Kept as a focused delivery primitive for tests and legacy callers.
+     */
     protected function deliverFiles(array $files, array $targetChatIds, TelegramDeliveryService $deliveryService): int
     {
         $sent = 0;
-        $fallbackChatId = $this->jobRecord->chat_id;
 
         foreach ($files as $file) {
-            if (! file_exists($file)) {
-                continue;
-            }
-
-            $usedFallback = false;
-
             foreach ($targetChatIds as $targetChatId) {
-                try {
-                    $deliveryService->sendDocumentToTarget([
-                        'chat_id'  => $targetChatId,
-                        'document' => InputFile::create($file),
-                        'caption'  => "PDF DKKD\n" . basename($file),
-                    ]);
-                    $sent++;
-                    $deliveryService->pauseBetweenDocumentSends();
-                } catch (\Throwable $e) {
-                    $msg = mb_strtolower($e->getMessage());
-                    $targetUnavailable = str_contains($msg, 'chat not found')
-                        || str_contains($msg, 'bot was blocked by the user')
-                        || str_contains($msg, 'user is deactivated');
-
-                    if ($targetUnavailable
-                        && ! $usedFallback
-                        && $targetChatId !== $fallbackChatId
-                        && ! in_array($fallbackChatId, $targetChatIds, true)) {
-                        try {
-                            $deliveryService->sendDocumentToSource([
-                                'chat_id'  => $fallbackChatId,
-                                'document' => InputFile::create($file),
-                                'caption'  => "PDF DKKD\n" . basename($file),
-                            ]);
-                            $sent++;
-                            $usedFallback = true;
-                            $deliveryService->pauseBetweenDocumentSends();
-                            continue;
-                        } catch (\Throwable $fallbackErr) {
-                            Log::warning("DeliverPendingFilesJob: fallback send failed — " . $fallbackErr->getMessage());
-                        }
-                    }
-
-                    Log::warning("DeliverPendingFilesJob: failed to send {$file} to {$targetChatId} — " . $e->getMessage());
-                }
+                $this->deliverOne($file, $targetChatId, $targetChatIds, $deliveryService);
+                $sent++;
+                $deliveryService->pauseBetweenDocumentSends();
             }
         }
 
         return $sent;
     }
 
+    /**
+     * @return string[]
+     */
+    protected function filesForJob(): array
+    {
+        if ($snapshot = $this->jobRecord->snapshot) {
+            $query = $snapshot->files();
+            if ($this->jobRecord->max_records !== null) {
+                $query->where('page_number', '<=', $this->jobRecord->max_records);
+            }
+
+            $downloadDir = rtrim((string) $snapshot->download_dir, DIRECTORY_SEPARATOR);
+
+            return $query->get()
+                ->map(fn ($file): string => $downloadDir.DIRECTORY_SEPARATOR.$file->relative_path)
+                ->values()
+                ->all();
+        }
+
+        $downloadDir = $this->jobRecord->download_dir;
+        if (! $downloadDir || ! is_dir($downloadDir)) {
+            return [];
+        }
+
+        $files = glob(rtrim($downloadDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'*.pdf') ?: [];
+        sort($files);
+
+        return $files;
+    }
+
     protected function targetChatIds(): array
     {
         $targetChatIds = $this->jobRecord->target_chat_ids ?? [];
 
-        if (empty($targetChatIds)) {
+        if ($targetChatIds === []) {
             $targetChatIds = [$this->jobRecord->target_chat_id ?: $this->jobRecord->chat_id];
         }
 
         return array_values(array_unique(array_filter(
-            array_map(static fn ($chatId) => trim((string) $chatId), $targetChatIds),
-            static fn (string $chatId) => $chatId !== ''
+            array_map(static fn ($chatId): string => trim((string) $chatId), $targetChatIds),
+            static fn (string $chatId): bool => $chatId !== ''
         )));
     }
 
@@ -166,28 +206,25 @@ class DeliverPendingFilesJob implements ShouldQueue
     {
         try {
             Telegram::sendMessage([
-                'chat_id'    => $this->jobRecord->chat_id,
-                'text'       => $text,
+                'chat_id' => $this->jobRecord->chat_id,
+                'text' => $text,
                 'parse_mode' => 'Markdown',
             ]);
-        } catch (\Throwable $e) {
-            Log::warning("DeliverPendingFilesJob: notify failed — " . $e->getMessage());
+        } catch (\Throwable $exception) {
+            Log::warning('DeliverPendingFilesJob: source notification failed.', [
+                'job_id' => $this->jobRecord->id,
+                'error' => $exception->getMessage(),
+            ]);
         }
     }
 
     protected function markDeliveryUnavailable(string $message): void
     {
-        $updates = [
-            'downloaded_count' => 0,
+        $this->jobRecord->update([
+            'status' => 'completed_with_errors',
             'delivered_at' => now(),
-        ];
-
-        if (! in_array($this->jobRecord->status, ['failed', 'stopped'], true)) {
-            $updates['status'] = 'completed';
-        }
-
-        $this->jobRecord->update($updates);
-
-        Log::info("DeliverPendingFilesJob #{$this->jobRecord->id}: {$message}.");
+            'delivery_error_message' => $message,
+        ]);
+        $this->notifySource('⚠️ Không tìm thấy file PDF hoặc nơi nhận hợp lệ để giao.');
     }
 }
