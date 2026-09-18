@@ -22,7 +22,7 @@ class TelegramDocumentTransport
             $proxy = $this->proxyService->currentProxy();
         } catch (\Throwable $exception) {
             Log::warning('Unable to resolve Telegram proxy; falling back to direct upload.', [
-                'error' => $exception->getMessage(),
+                'error' => $this->safeErrorMessage($exception->getMessage(), $token),
             ]);
 
             return $this->sendRequest($token, $chatId, $filePath, $caption, null);
@@ -40,11 +40,11 @@ class TelegramDocumentTransport
             }
 
             Log::warning('Telegram proxy upload failed; rotating proxy once.', [
-                'error' => $exception->getMessage(),
+                'error' => $this->safeErrorMessage($exception->getMessage(), $token),
             ]);
         } catch (ConnectionException $exception) {
             Log::warning('Telegram proxy connection failed; rotating proxy once.', [
-                'error' => $exception->getMessage(),
+                'error' => $this->safeErrorMessage($exception->getMessage(), $token),
             ]);
         }
 
@@ -61,11 +61,11 @@ class TelegramDocumentTransport
             }
 
             Log::warning('Rotated Telegram proxy failed; falling back to direct upload.', [
-                'error' => $exception->getMessage(),
+                'error' => $this->safeErrorMessage($exception->getMessage(), $token),
             ]);
         } catch (\Throwable $exception) {
             Log::warning('Could not rotate Telegram proxy; falling back to direct upload.', [
-                'error' => $exception->getMessage(),
+                'error' => $this->safeErrorMessage($exception->getMessage(), $token),
             ]);
         }
 
@@ -98,11 +98,18 @@ class TelegramDocumentTransport
                     $request = $request->withOptions(['proxy' => $this->proxyUrl($proxy)]);
                 }
 
-                $response = $this->attachDocument($request, $stream, basename($filePath))
-                    ->post("https://api.telegram.org/bot{$token}/sendDocument", [
-                        'chat_id' => $chatId,
-                        'caption' => $caption,
-                    ]);
+                try {
+                    $response = $this->attachDocument($request, $stream, basename($filePath))
+                        ->post("https://api.telegram.org/bot{$token}/sendDocument", [
+                            'chat_id' => $chatId,
+                            'caption' => $caption,
+                        ]);
+                } catch (ConnectionException $exception) {
+                    throw new TelegramDocumentTransportException(
+                        'Telegram upload connection failed: '.$this->safeErrorMessage($exception->getMessage(), $token),
+                        $proxy !== null
+                    );
+                }
             } finally {
                 fclose($stream);
             }
@@ -118,7 +125,10 @@ class TelegramDocumentTransport
                 continue;
             }
 
-            $description = (string) $response->json('description', "Telegram HTTP {$response->status()}");
+            $description = $this->safeErrorMessage(
+                (string) $response->json('description', "Telegram HTTP {$response->status()}"),
+                $token
+            );
 
             throw new TelegramDocumentTransportException(
                 $description,
@@ -154,5 +164,15 @@ class TelegramDocumentTransport
         }
 
         return ($parts['scheme'] ?? 'http').'://'.$credentials.$parts['host'].':'.$parts['port'];
+    }
+
+    private function safeErrorMessage(string $message, string $token): string
+    {
+        $secrets = array_filter([
+            $token,
+            (string) config('services.telegram_proxy.api_key', ''),
+        ]);
+
+        return str_replace($secrets, '[redacted]', $message);
     }
 }
