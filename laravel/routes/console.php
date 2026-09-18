@@ -150,7 +150,7 @@ Artisan::command('scraper:clean-snapshots {--dry-run : Show snapshots without de
         ->whereDoesntHave('jobs', fn ($query) => $query->whereIn('status', $activeStatuses))
         ->where(function ($query) use ($readyCutoff, $obsoleteCutoff) {
             $query->where(function ($query) use ($readyCutoff) {
-                $query->where('status', 'ready')
+                $query->whereIn('status', ['ready', 'partial'])
                     ->where(function ($query) use ($readyCutoff) {
                         $query->where('last_used_at', '<=', $readyCutoff)
                             ->orWhere(function ($query) use ($readyCutoff) {
@@ -203,9 +203,9 @@ Artisan::command('scraper:clean-snapshots {--dry-run : Show snapshots without de
 
 Schedule::command('scraper:clean-snapshots')->hourly();
 Schedule::job(new WarmTodaySnapshotJob)
-    ->everyThirtyMinutes()
+    ->everyTwoHours()
     ->timezone(config('app.timezone'))
-    ->withoutOverlapping(30);
+    ->withoutOverlapping(150);
 
 try {
     $schedules = ScrapeSchedule::where('is_active', true)->get();

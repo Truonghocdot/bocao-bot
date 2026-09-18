@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ScrapeJob;
+use App\Models\ScrapeSnapshotFile;
 use App\Services\TelegramDeliveryService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -172,7 +173,10 @@ class DeliverPendingFilesJob implements ShouldQueue
             $downloadDir = rtrim((string) $snapshot->download_dir, DIRECTORY_SEPARATOR);
 
             return $query->get()
-                ->map(fn ($file): string => $downloadDir.DIRECTORY_SEPARATOR.$file->relative_path)
+                ->filter(fn (ScrapeSnapshotFile $file): bool => ScrapeSnapshotFile::isValidPdfPath(
+                    $downloadDir.DIRECTORY_SEPARATOR.$file->relative_path
+                ))
+                ->map(fn (ScrapeSnapshotFile $file): string => $downloadDir.DIRECTORY_SEPARATOR.$file->relative_path)
                 ->values()
                 ->all();
         }

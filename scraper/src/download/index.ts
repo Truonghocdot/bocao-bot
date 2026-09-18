@@ -36,6 +36,34 @@ function jitter(ms: number): number {
   return ms + Math.floor(Math.random() * 800);
 }
 
+async function assertPageContextAvailable(page: Page, row: RowDetail): Promise<void> {
+  if (page.isClosed()) {
+    throw new Error(`PAGE_CONTEXT_LOST: Browser closed while downloading page ${row.pageIndex}.`);
+  }
+
+  const pdfButtons = await page.locator(PDF_BTN).count().catch(() => 0);
+  if (pdfButtons > 0) {
+    return;
+  }
+
+  const diagnostic = await page.evaluate(() => ({
+    url: window.location.href,
+    title: document.title,
+    tablePresent: Boolean(document.querySelector("#ctl00_C_CtlList")),
+    firstRow: document.querySelector(".enterprise_name")?.textContent?.trim() ?? "",
+  })).catch(() => ({
+    url: page.url(),
+    title: "",
+    tablePresent: false,
+    firstRow: "",
+  }));
+
+  throw new Error(
+    `PAGE_CONTEXT_LOST: Result page disappeared while downloading page ${row.pageIndex}, file #${row.globalIndex + 1}. `
+      + `url=${diagnostic.url} title=${diagnostic.title || "unknown"} table=${diagnostic.tablePresent} buttons=${pdfButtons}`
+  );
+}
+
 async function captureDownloadErrorScreenshot(
   page: Page,
   row: RowDetail,
@@ -136,6 +164,7 @@ export async function downloadAllPdfsByClick(
         break;
       } catch (error: any) {
         await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`, downloadDir);
+        await assertPageContextAvailable(page, row);
 
         const isLastAttempt = attempt === maxAttempts;
         if (isLastAttempt) {
@@ -194,6 +223,7 @@ export async function downloadCurrentPagePdfsByClick(
         break;
       } catch (error: any) {
         await captureDownloadErrorScreenshot(page, row, `attempt_${attempt}`, downloadDir);
+        await assertPageContextAvailable(page, row);
 
         const isLastAttempt = attempt === maxAttempts;
         if (isLastAttempt) {

@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ScrapeJob;
+use App\Models\ScrapeSnapshotFile;
 use App\Services\ScrapeSnapshotService;
 use App\Services\TelegramLogService;
 use Illuminate\Bus\Queueable;
@@ -66,7 +67,12 @@ class RunScraperJob implements ShouldQueue
             if ($this->jobRecord->max_records !== null) {
                 $fileQuery->where('page_number', '<=', $this->jobRecord->max_records);
             }
-            $fileCount = $fileQuery->count();
+            $downloadDir = rtrim((string) $snapshot->download_dir, DIRECTORY_SEPARATOR);
+            $fileCount = $fileQuery->get()->filter(
+                fn (ScrapeSnapshotFile $file): bool => ScrapeSnapshotFile::isValidPdfPath(
+                    $downloadDir.DIRECTORY_SEPARATOR.$file->relative_path
+                )
+            )->count();
 
             $this->jobRecord->update([
                 'scrape_snapshot_id' => $snapshot->id,
@@ -143,6 +149,10 @@ class RunScraperJob implements ShouldQueue
 
         if (str_contains(mb_strtolower($message), 'timeout')) {
             return '❌ Quá thời gian chờ khi kết nối tới trang tra cứu DKKD. Vui lòng thử lại sau.';
+        }
+
+        if (str_contains($message, 'SNAPSHOT_COMPLETENESS_TOO_LOW')) {
+            return '❌ Dữ liệu tải được chưa đủ để gửi. Bot sẽ thử tạo lại snapshot ở lượt kế tiếp.';
         }
 
         return '❌ Không thể chuẩn bị snapshot PDF đầy đủ. Snapshot cũ vẫn được giữ nguyên.';

@@ -9,6 +9,7 @@ use App\Services\ScrapeSnapshotService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Mockery;
+use RuntimeException;
 use Tests\TestCase;
 
 class ScrapeSnapshotServiceTest extends TestCase
@@ -45,14 +46,14 @@ class ScrapeSnapshotServiceTest extends TestCase
 
     public function test_higher_page_count_builds_and_promotes_a_complete_snapshot(): void
     {
-        [$oldSnapshot] = $this->createReadySnapshot(1, 1, 1, now()->subHour());
+        [$oldSnapshot] = $this->createReadySnapshot(1, 1, 1, now()->subHours(3));
         $newDirectory = $this->makeDirectory('new');
         $firstPath = $this->makePdf($newDirectory, '0001_First.pdf');
         $secondPath = $this->makePdf($newDirectory, '0002_Second.pdf');
 
         $scraper = Mockery::mock(ScraperService::class);
         $scraper->shouldReceive('inspect')->once()->andReturn([
-            'totalRecords' => 21,
+            'totalRecords' => 2,
             'totalPages' => 2,
         ]);
         $scraper->shouldReceive('download')->once()->with(
@@ -107,10 +108,10 @@ class ScrapeSnapshotServiceTest extends TestCase
 
     public function test_lower_page_count_keeps_a_covering_snapshot(): void
     {
-        [$snapshot] = $this->createReadySnapshot(3, 3, 1, now()->subHour());
+        [$snapshot] = $this->createReadySnapshot(3, 3, 20, now()->subHours(3));
         $scraper = Mockery::mock(ScraperService::class);
         $scraper->shouldReceive('inspect')->once()->andReturn([
-            'totalRecords' => 35,
+            'totalRecords' => 20,
             'totalPages' => 2,
         ]);
         $scraper->shouldNotReceive('download');
@@ -123,7 +124,161 @@ class ScrapeSnapshotServiceTest extends TestCase
 
         $this->assertTrue($result['cache_hit']);
         $this->assertSame($snapshot->id, $result['snapshot']->id);
-        $this->assertSame(2, $result['snapshot']->last_seen_total_pages);
+        $this->assertSame(3, $result['snapshot']->last_seen_total_pages);
+    }
+
+    public function test_partial_snapshot_above_sixty_percent_is_returned(): void
+    {
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldReceive('inspect')->once()->andReturn([
+            'totalRecords' => 10,
+            'totalPages' => 1,
+        ]);
+        $scraper->shouldReceive('download')->once()->andReturnUsing(function (
+            ?string $fromDate,
+            ?string $toDate,
+            ?int $limit,
+            string $downloadKey
+        ): array {
+            $directory = base_path("../scraper/downloads/{$downloadKey}");
+            File::ensureDirectoryExists($directory);
+            $this->temporaryDirectories[] = $directory;
+
+            for ($index = 1; $index <= 7; $index++) {
+                $this->makePdf($directory, sprintf('%04d_Test.pdf', $index));
+            }
+
+            throw new RuntimeException('PAGE_CONTEXT_LOST');
+        });
+
+        $result = (new ScrapeSnapshotService($scraper))->resolve(
+            '17/09/2026',
+            '17/09/2026',
+            null
+        );
+
+        $this->assertFalse($result['cache_hit']);
+        $this->assertSame('partial', $result['snapshot']->status);
+        $this->assertSame(7, $result['snapshot']->files()->count());
+    }
+
+    public function test_snapshot_at_exactly_sixty_percent_is_rejected(): void
+    {
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldReceive('inspect')->once()->andReturn([
+            'totalRecords' => 10,
+            'totalPages' => 1,
+        ]);
+        $scraper->shouldReceive('download')->once()->andReturnUsing(function (
+            ?string $fromDate,
+            ?string $toDate,
+            ?int $limit,
+            string $downloadKey
+        ): array {
+            $directory = base_path("../scraper/downloads/{$downloadKey}");
+            File::ensureDirectoryExists($directory);
+            $this->temporaryDirectories[] = $directory;
+
+            for ($index = 1; $index <= 6; $index++) {
+                $this->makePdf($directory, sprintf('%04d_Test.pdf', $index));
+            }
+
+            throw new RuntimeException('PAGE_CONTEXT_LOST');
+        });
+
+        try {
+            (new ScrapeSnapshotService($scraper))->resolve(
+                '17/09/2026',
+                '17/09/2026',
+                null
+            );
+            $this->fail('A snapshot at exactly 60% must not be returned.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('SNAPSHOT_COMPLETENESS_TOO_LOW', $exception->getMessage());
+        }
+
+        $snapshot = ScrapeSnapshot::latest('id')->firstOrFail();
+        $this->assertSame('partial', $snapshot->status);
+        $this->assertSame(6, $snapshot->files()->count());
+    }
+
+    public function test_pdf_with_invalid_content_does_not_count_toward_completeness(): void
+    {
+        [$snapshot, $directory] = $this->createReadySnapshot(1, 1, 7);
+        $snapshot->update([
+            'status' => 'partial',
+            'source_total_records' => 10,
+            'last_seen_total_records' => 10,
+        ]);
+        file_put_contents($directory.DIRECTORY_SEPARATOR.'0007_Test.pdf', 'Not a PDF');
+
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldNotReceive('inspect');
+        $scraper->shouldNotReceive('download');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('SNAPSHOT_COMPLETENESS_TOO_LOW');
+
+        (new ScrapeSnapshotService($scraper))->resolve('17/09/2026', '17/09/2026', null);
+    }
+
+    public function test_more_complete_snapshot_wins_over_newer_snapshot(): void
+    {
+        [$moreComplete] = $this->createReadySnapshot(1, 1, 8, now());
+        $moreComplete->update([
+            'status' => 'partial',
+            'source_total_records' => 10,
+            'last_seen_total_records' => 10,
+            'completed_at' => now()->subHour(),
+        ]);
+
+        [$newer] = $this->createReadySnapshot(1, 1, 7, now());
+        $newer->update([
+            'status' => 'partial',
+            'source_total_records' => 10,
+            'last_seen_total_records' => 10,
+            'completed_at' => now(),
+        ]);
+
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldNotReceive('inspect');
+        $scraper->shouldNotReceive('download');
+
+        $result = (new ScrapeSnapshotService($scraper))->resolve(
+            '17/09/2026',
+            '17/09/2026',
+            null
+        );
+
+        $this->assertSame($moreComplete->id, $result['snapshot']->id);
+    }
+
+    public function test_failed_snapshot_with_existing_pdfs_is_recovered_for_delivery(): void
+    {
+        [$snapshot, $directory] = $this->createReadySnapshot(1, 1, 7);
+        $snapshot->files()->delete();
+        $snapshot->update([
+            'status' => 'failed',
+            'downloaded_files' => 0,
+            'source_total_records' => 10,
+            'last_seen_total_records' => 10,
+            'error_message' => 'PAGE_CONTEXT_LOST',
+        ]);
+
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldNotReceive('inspect');
+        $scraper->shouldNotReceive('download');
+
+        $result = (new ScrapeSnapshotService($scraper))->resolve(
+            '17/09/2026',
+            '17/09/2026',
+            null
+        );
+
+        $this->assertSame($snapshot->id, $result['snapshot']->id);
+        $this->assertSame('partial', $snapshot->refresh()->status);
+        $this->assertSame(7, $snapshot->files()->count());
+        $this->assertDirectoryExists($directory);
     }
 
     public function test_snapshot_cleanup_preserves_active_delivery_and_removes_unused_snapshot(): void
@@ -157,9 +312,9 @@ class ScrapeSnapshotServiceTest extends TestCase
             'from_date' => '17/09/2026',
             'to_date' => '17/09/2026',
             'status' => 'ready',
-            'source_total_records' => $sourcePages * 20,
+            'source_total_records' => $fileCount,
             'source_total_pages' => $sourcePages,
-            'last_seen_total_records' => $sourcePages * 20,
+            'last_seen_total_records' => $fileCount,
             'last_seen_total_pages' => $sourcePages,
             'scraped_pages' => $scrapedPages,
             'expected_files' => $fileCount,

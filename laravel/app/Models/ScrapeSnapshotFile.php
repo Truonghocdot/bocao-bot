@@ -27,4 +27,22 @@ class ScrapeSnapshotFile extends Model
         return rtrim((string) $this->snapshot->download_dir, DIRECTORY_SEPARATOR)
             .DIRECTORY_SEPARATOR.$this->relative_path;
     }
+
+    public static function isValidPdfPath(string $path): bool
+    {
+        if (! is_file($path) || filesize($path) < 5) {
+            return false;
+        }
+
+        $handle = fopen($path, 'rb');
+        if ($handle === false) {
+            return false;
+        }
+
+        try {
+            return fread($handle, 5) === '%PDF-';
+        } finally {
+            fclose($handle);
+        }
+    }
 }

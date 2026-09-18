@@ -10,8 +10,6 @@ use Telegram\Bot\Laravel\Facades\Telegram;
 
 class TelegramDeliveryService
 {
-    protected const DEFAULT_SEND_DELAY_US = 350000;
-
     protected const MAX_RATE_LIMIT_RETRIES = 5;
 
     public function __construct(private readonly TelegramDocumentTransport $documentTransport) {}
@@ -42,7 +40,9 @@ class TelegramDeliveryService
 
     public function pauseBetweenDocumentSends(): void
     {
-        usleep(self::DEFAULT_SEND_DELAY_US);
+        $delayMs = max(0, (int) config('services.telegram_delivery.delay_ms', 1000));
+
+        usleep($delayMs * 1000);
     }
 
     protected function deliveryBotName(): string

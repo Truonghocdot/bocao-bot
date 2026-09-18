@@ -45,8 +45,9 @@ return [
         'seconds_per_file' => (float) env('SCRAPER_SECONDS_PER_FILE', 3.2),
         'rows_per_page' => (int) env('SCRAPER_ROWS_PER_PAGE', 20),
         'timeout_buffer' => (float) env('SCRAPER_TIMEOUT_BUFFER', 1.5),
-        'snapshot_fresh_minutes' => (int) env('SCRAPER_SNAPSHOT_FRESH_MINUTES', 30),
+        'snapshot_fresh_minutes' => (int) env('SCRAPER_SNAPSHOT_FRESH_MINUTES', 120),
         'snapshot_retention_days' => (int) env('SCRAPER_SNAPSHOT_RETENTION_DAYS', 7),
+        'snapshot_min_completeness' => (float) env('SCRAPER_SNAPSHOT_MIN_COMPLETENESS', 60),
     ],
 
     'telegram_proxy' => [
@@ -63,6 +64,7 @@ return [
 
     'telegram_delivery' => [
         'chunk_size' => (int) env('TELEGRAM_DELIVERY_CHUNK_SIZE', 5),
+        'delay_ms' => (int) env('TELEGRAM_DELIVERY_DELAY_MS', 1000),
     ],
 
 ];

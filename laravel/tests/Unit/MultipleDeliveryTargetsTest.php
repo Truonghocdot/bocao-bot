@@ -134,4 +134,50 @@ class MultipleDeliveryTargetsTest extends TestCase
             File::deleteDirectory($directory);
         }
     }
+
+    public function test_delivery_skips_invalid_pdf_in_snapshot_manifest(): void
+    {
+        $directory = base_path('../scraper/downloads/test-validation-'.uniqid());
+        File::ensureDirectoryExists($directory);
+
+        try {
+            $snapshot = ScrapeSnapshot::create([
+                'from_date' => '17/09/2026',
+                'to_date' => '17/09/2026',
+                'status' => 'partial',
+                'source_total_records' => 2,
+                'source_total_pages' => 1,
+                'scraped_pages' => 1,
+                'downloaded_files' => 2,
+                'download_dir' => $directory,
+            ]);
+
+            foreach (['%PDF-valid', 'Not a PDF'] as $index => $contents) {
+                $filename = sprintf('%04d_Test.pdf', $index + 1);
+                file_put_contents($directory.DIRECTORY_SEPARATOR.$filename, $contents);
+                $snapshot->files()->create([
+                    'page_number' => 1,
+                    'global_index' => $index,
+                    'filename' => $filename,
+                    'relative_path' => $filename,
+                    'size_bytes' => strlen($contents),
+                ]);
+            }
+
+            $jobRecord = ScrapeJob::create([
+                'chat_id' => '123456',
+                'scrape_snapshot_id' => $snapshot->id,
+                'status' => 'delivering',
+            ]);
+            $deliveryJob = new DeliverPendingFilesJob($jobRecord);
+            $filesForJob = new ReflectionMethod($deliveryJob, 'filesForJob');
+
+            $this->assertSame(
+                [$directory.DIRECTORY_SEPARATOR.'0001_Test.pdf'],
+                $filesForJob->invoke($deliveryJob)
+            );
+        } finally {
+            File::deleteDirectory($directory);
+        }
+    }
 }
