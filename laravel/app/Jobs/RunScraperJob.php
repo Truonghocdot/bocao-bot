@@ -50,7 +50,8 @@ class RunScraperJob implements ShouldQueue
             $resolved = $snapshotService->resolve(
                 (string) $this->jobRecord->from_date,
                 (string) $this->jobRecord->to_date,
-                $this->jobRecord->max_records
+                $this->jobRecord->max_records,
+                true
             );
 
             $snapshot = $resolved['snapshot'];

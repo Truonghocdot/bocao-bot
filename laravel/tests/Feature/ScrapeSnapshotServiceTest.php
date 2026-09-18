@@ -106,6 +106,85 @@ class ScrapeSnapshotServiceTest extends TestCase
         $this->assertSame(0, $result['snapshot']->downloaded_files);
     }
 
+    public function test_manual_request_rechecks_a_fresh_empty_snapshot_and_downloads_new_records(): void
+    {
+        $emptySnapshot = ScrapeSnapshot::create([
+            'from_date' => '17/09/2026',
+            'to_date' => '17/09/2026',
+            'status' => 'ready',
+            'source_total_records' => 0,
+            'source_total_pages' => 0,
+            'last_seen_total_records' => 0,
+            'last_seen_total_pages' => 0,
+            'scraped_pages' => 0,
+            'expected_files' => 0,
+            'downloaded_files' => 0,
+            'checked_at' => now(),
+            'completed_at' => now(),
+        ]);
+        $newDirectory = $this->makeDirectory('manual-refresh');
+        $newPath = $this->makePdf($newDirectory, '0001_New.pdf');
+
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldReceive('inspect')->once()->andReturn([
+            'totalRecords' => 1,
+            'totalPages' => 1,
+        ]);
+        $scraper->shouldReceive('download')->once()->andReturn([
+            'downloaded' => 1,
+            'expectedFiles' => 1,
+            'downloadDir' => $newDirectory,
+            'files' => [$this->manifest($newPath, 1, 0, 'New')],
+        ]);
+
+        $result = (new ScrapeSnapshotService($scraper))->resolve(
+            '17/09/2026',
+            '17/09/2026',
+            null,
+            true
+        );
+
+        $this->assertFalse($result['cache_hit']);
+        $this->assertSame(1, $result['snapshot']->downloaded_files);
+        $this->assertSame('superseded', $emptySnapshot->refresh()->status);
+    }
+
+    public function test_manual_request_rechecks_empty_snapshot_before_confirming_no_data(): void
+    {
+        $emptySnapshot = ScrapeSnapshot::create([
+            'from_date' => '17/09/2026',
+            'to_date' => '17/09/2026',
+            'status' => 'ready',
+            'source_total_records' => 0,
+            'source_total_pages' => 0,
+            'last_seen_total_records' => 0,
+            'last_seen_total_pages' => 0,
+            'scraped_pages' => 0,
+            'expected_files' => 0,
+            'downloaded_files' => 0,
+            'checked_at' => now(),
+            'completed_at' => now(),
+        ]);
+
+        $scraper = Mockery::mock(ScraperService::class);
+        $scraper->shouldReceive('inspect')->once()->andReturn([
+            'totalRecords' => 0,
+            'totalPages' => 0,
+        ]);
+        $scraper->shouldNotReceive('download');
+
+        $result = (new ScrapeSnapshotService($scraper))->resolve(
+            '17/09/2026',
+            '17/09/2026',
+            null,
+            true
+        );
+
+        $this->assertTrue($result['cache_hit']);
+        $this->assertSame($emptySnapshot->id, $result['snapshot']->id);
+        $this->assertTrue($result['snapshot']->checked_at->isToday());
+    }
+
     public function test_lower_page_count_keeps_a_covering_snapshot(): void
     {
         [$snapshot] = $this->createReadySnapshot(3, 3, 20, now()->subHours(3));

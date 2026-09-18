@@ -18,21 +18,34 @@ class ScrapeSnapshotService
     /**
      * @return array{snapshot: ScrapeSnapshot, cache_hit: bool}
      */
-    public function resolve(string $fromDate, string $toDate, ?int $pageLimit): array
-    {
+    public function resolve(
+        string $fromDate,
+        string $toDate,
+        ?int $pageLimit,
+        bool $refreshEmptySnapshot = false
+    ): array {
         $lockKey = 'scrape-snapshot:'.sha1("{$fromDate}|{$toDate}");
 
         return Cache::lock($lockKey, 15000)->block(
             60,
-            fn (): array => $this->resolveWhileLocked($fromDate, $toDate, $pageLimit)
+            fn (): array => $this->resolveWhileLocked(
+                $fromDate,
+                $toDate,
+                $pageLimit,
+                $refreshEmptySnapshot
+            )
         );
     }
 
     /**
      * @return array{snapshot: ScrapeSnapshot, cache_hit: bool}
      */
-    private function resolveWhileLocked(string $fromDate, string $toDate, ?int $pageLimit): array
-    {
+    private function resolveWhileLocked(
+        string $fromDate,
+        string $toDate,
+        ?int $pageLimit,
+        bool $refreshEmptySnapshot
+    ): array {
         $this->recoverFailedSnapshots($fromDate, $toDate);
 
         $latestObservation = $this->latestObservation($fromDate, $toDate);
@@ -41,7 +54,11 @@ class ScrapeSnapshotService
         $freshMinutes = max(1, (int) config('services.scraper.snapshot_fresh_minutes', 120));
         $isFresh = $latestObservation?->checked_at?->greaterThanOrEqualTo(now()->subMinutes($freshMinutes)) ?? false;
 
-        if ($isFresh) {
+        $mustRecheckEmpty = $refreshEmptySnapshot
+            && $best !== null
+            && (int) $best->source_total_records === 0;
+
+        if ($isFresh && ! $mustRecheckEmpty) {
             if ($best) {
                 return $this->reuse($best, $knownRecords, $knownPages, false);
             }
